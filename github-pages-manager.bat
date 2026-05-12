@@ -11,11 +11,10 @@ exit /b %ERRORLEVEL%
 
 $ErrorActionPreference = "Stop"
 
-$AppVersion = "1.0.0"
+$AppVersion = "1.0.1"
 $UpdateManifestUrl = "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/latest.json"
 $StoreDir = Join-Path $env:APPDATA "GithubPagesPublisher"
 $DbPath = Join-Path $StoreDir "repos.json"
-$UpdateStatePath = Join-Path $StoreDir "update-state.json"
 $AdminConfigPath = Join-Path $env:APPDATA "GithubPagesPublisherAdmin\admin.json"
 $LocalMapFile = ".gh-pages-publisher.json"
 $script:ReturnToMain = $false
@@ -183,6 +182,58 @@ function Invoke-JsonUrl($url) {
     throw "URL okunamadi. PowerShell: $lastError"
 }
 
+function Save-UrlToFile($url, $outFile) {
+    if ([string]::IsNullOrWhiteSpace($url)) {
+        throw "Indirme URL'i bos geldi."
+    }
+
+    $oldProtocol = [Net.ServicePointManager]::SecurityProtocol
+    $lastError = $null
+
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = $oldProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $headers = @{
+            "User-Agent" = "GitHubPagesManager"
+            "Cache-Control" = "no-cache"
+        }
+        Invoke-WebRequest -Uri $url -OutFile $outFile -Headers $headers -UseBasicParsing
+        return
+    }
+    catch {
+        $lastError = $_.Exception.Message
+    }
+    finally {
+        [Net.ServicePointManager]::SecurityProtocol = $oldProtocol
+    }
+
+    $curl = Get-Command "curl.exe" -ErrorAction SilentlyContinue
+
+    if ($null -ne $curl) {
+        $oldCurlPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+
+        try {
+            $curlOutput = & curl.exe --location --silent --show-error --fail --ssl-no-revoke `
+                --header "User-Agent: GitHubPagesManager" `
+                --header "Cache-Control: no-cache" `
+                --output $outFile `
+                $url 2>&1
+            $curlCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $oldCurlPreference
+        }
+
+        if ($curlCode -eq 0 -and (Test-Path $outFile)) {
+            return
+        }
+
+        throw "Dosya indirilemedi. PowerShell: $lastError Curl: $($curlOutput -join [Environment]::NewLine)"
+    }
+
+    throw "Dosya indirilemedi. PowerShell: $lastError"
+}
+
 function Get-ManifestNotes($manifest) {
     if ($null -eq $manifest) {
         return @()
@@ -239,19 +290,6 @@ function Get-EffectiveUpdateManifestUrl {
     return $null
 }
 
-function Load-UpdateState {
-    if (!(Test-Path $UpdateStatePath)) {
-        return $null
-    }
-
-    try {
-        return Get-Content -LiteralPath $UpdateStatePath -Raw -Encoding UTF8 | ConvertFrom-Json
-    }
-    catch {
-        return $null
-    }
-}
-
 function Get-LocalAdminManifest {
     $manifestPath = Join-Path $env:APPDATA "GithubPagesPublisherAdmin\update-repo\latest.json"
 
@@ -265,17 +303,6 @@ function Get-LocalAdminManifest {
     catch {
         return $null
     }
-}
-
-function Save-SkippedUpdateVersion($version) {
-    Ensure-Storage
-
-    $state = [PSCustomObject]@{
-        SkippedVersion = $version
-        SkippedAt = (Get-Date).ToString("s")
-    }
-
-    $state | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $UpdateStatePath -Encoding UTF8
 }
 
 function Test-IsNewerVersion($latestVersion, $currentVersion) {
@@ -315,14 +342,14 @@ function Start-SelfUpdate($manifest, $manifestUrl) {
 
     Write-Host ""
     Write-Host "[INFO] Yeni surum indiriliyor..."
-    Invoke-WebRequest -Uri $fileInfo.downloadUrl -OutFile $downloadPath -UseBasicParsing
+    Save-UrlToFile $fileInfo.downloadUrl $downloadPath
 
     if (![string]::IsNullOrWhiteSpace($fileInfo.sha256)) {
         $downloadHash = (Get-FileHash -LiteralPath $downloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
 
         if ($downloadHash -ne $fileInfo.sha256.ToLowerInvariant()) {
             Remove-Item -LiteralPath $downloadPath -Force -ErrorAction SilentlyContinue
-            throw "Indirilen dosyanin SHA256 dogrulamasi basarisiz."
+            throw "Indirilen dosyanin SHA256 dogrulamasi basarisiz. Beklenen: $($fileInfo.sha256) Gelen: $downloadHash"
         }
     }
 
@@ -431,12 +458,6 @@ function Check-ForUpdates {
         return
     }
 
-    $state = Load-UpdateState
-
-    if ($null -ne $state -and $state.SkippedVersion -eq $manifest.version) {
-        return
-    }
-
     Header
     Write-Host "Yeni guncelleme bulundu."
     Write-Host ""
@@ -456,19 +477,13 @@ function Check-ForUpdates {
 
     Write-Host ""
     Write-Host "1) Guncelle"
-    Write-Host "2) Bu surumu atla"
-    Write-Host "3) Simdilik gec"
+    Write-Host "2) Simdilik gec"
     Write-Host ""
     Write-Host "Secim:"
 
-    $choice = Read-KeyChoice @("1", "2", "3")
+    $choice = Read-KeyChoice @("1", "2")
 
     if ($choice -eq "2") {
-        Save-SkippedUpdateVersion $manifest.version
-        return
-    }
-
-    if ($choice -eq "3") {
         return
     }
 
