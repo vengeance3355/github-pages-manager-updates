@@ -3,16 +3,19 @@
     "appId":  "github-pages-manager",
     "appName":  "GitHub Pages Manager",
     "version":  "1.0.1",
-    "publishedAt":  "2026-05-12T22:17:21Z",
+    "publishedAt":  "2026-05-12T22:21:15Z",
     "notes":  [
-                  "Yayınlama"
+                  "yayınlama"
               ],
+    "releaseNotes":  [
+                         "yayınlama"
+                     ],
     "latestJsonUrl":  "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/latest.json",
     "files":  {
                   "managerBat":  {
                                      "name":  "github-pages-manager.bat",
-                                     "sha256":  "0687dcf7ee7bf8e7a423ef1fa6300180cdd8605b1537ea7e0556feaf120d8fdc",
-                                     "sizeBytes":  49196,
+                                     "sha256":  "ea56636c127be4b648438341f16d615cc75f0791ab2343cc7e939973e52beff6",
+                                     "sizeBytes":  50119,
                                      "downloadUrl":  "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/github-pages-manager.bat"
                                  }
               }

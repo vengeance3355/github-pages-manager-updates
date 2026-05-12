@@ -178,13 +178,23 @@ function Invoke-JsonUrl($url) {
 }
 
 function Get-ManifestNotes($manifest) {
-    if ($null -eq $manifest -or $null -eq $manifest.notes) {
+    if ($null -eq $manifest) {
+        return @()
+    }
+
+    $rawNotes = $manifest.notes
+
+    if ($null -eq $rawNotes) {
+        $rawNotes = $manifest.releaseNotes
+    }
+
+    if ($null -eq $rawNotes) {
         return @()
     }
 
     $notes = @()
 
-    foreach ($note in @($manifest.notes)) {
+    foreach ($note in @($rawNotes)) {
         if (![string]::IsNullOrWhiteSpace([string]$note)) {
             $notes += ([string]$note).Trim()
         }
@@ -394,6 +404,14 @@ function Check-ForUpdates {
         return
     }
 
+    $localManifest = Get-LocalAdminManifest
+    $manifestNotes = @(Get-ManifestNotes $manifest)
+
+    if ($manifestNotes.Count -eq 0 -and $null -ne $localManifest -and $localManifest.version -eq $manifest.version) {
+        $manifest = $localManifest
+        $manifestNotes = @(Get-ManifestNotes $manifest)
+    }
+
     if (![string]::IsNullOrWhiteSpace($manifest.appId) -and $manifest.appId -ne "github-pages-manager") {
         return
     }
@@ -416,8 +434,13 @@ function Check-ForUpdates {
     Write-Host ""
     Write-Host "Guncelleme notlari:"
 
-    foreach ($note in @(Get-ManifestNotes $manifest)) {
-        Write-Host "- $note"
+    if ($manifestNotes.Count -eq 0) {
+        Write-Host "- Not yok."
+    }
+    else {
+        foreach ($note in $manifestNotes) {
+            Write-Host "- $note"
+        }
     }
 
     Write-Host ""
@@ -482,6 +505,16 @@ function Show-UpdateNotes {
         Write-Host ""
     }
 
+    $localManifest = Get-LocalAdminManifest
+    $notes = @(Get-ManifestNotes $manifest)
+
+    if ($notes.Count -eq 0 -and $null -ne $localManifest -and $localManifest.version -eq $manifest.version) {
+        $manifest = $localManifest
+        $notes = @(Get-ManifestNotes $manifest)
+        Write-Host "[UYARI] GitHub manifestinde not yok. Yerel son notlar gosteriliyor."
+        Write-Host ""
+    }
+
     Write-Host "Mevcut uygulama surumu: $AppVersion"
     Write-Host "Yayindaki son surum: $($manifest.version)"
 
@@ -491,8 +524,6 @@ function Show-UpdateNotes {
 
     Write-Host ""
     Write-Host "Guncelleme notlari:"
-
-    $notes = @(Get-ManifestNotes $manifest)
 
     if ($notes.Count -eq 0) {
         Write-Host "- Not yok."
