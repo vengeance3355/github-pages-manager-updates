@@ -5,10 +5,10 @@
     "version":  "1.0.5",
     "publishedAt":  "2026-05-12T23:18:22Z",
     "notes":  [
-                  "Added: birçok yeni özellik"
+                  "Added: bir çok yeni özellik"
               ],
     "releaseNotes":  [
-                         "Added: birçok yeni özellik"
+                         "Added: bir çok yeni özellik"
                      ],
     "latestJsonUrl":  "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/latest.json",
     "errorReportRepo":  "vengeance3355/github-pages-manager-updates",
@@ -29,7 +29,7 @@
               },
     "categorizedNotes":  {
                              "Added":  [
-                                           "birçok yeni özellik"
+                                           "bir çok yeni özellik"
                                        ],
                              "Fixed":  [
 
@@ -44,5 +44,5 @@
 
                                           ]
                          },
-    "notesUpdatedAt":  "2026-05-12T23:51:58Z"
+    "notesUpdatedAt":  "2026-05-12T23:52:11Z"
 }
