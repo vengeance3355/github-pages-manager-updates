@@ -146,7 +146,8 @@ function Invoke-JsonUrl($url) {
         $response = Invoke-RestMethod -Uri $uri.Uri.AbsoluteUri -Headers $headers -UseBasicParsing
 
         if ($response -is [string]) {
-            return ($response | ConvertFrom-Json)
+            $jsonText = $response.TrimStart([char]0xFEFF)
+            return ($jsonText | ConvertFrom-Json)
         }
 
         return $response
@@ -176,7 +177,8 @@ function Invoke-JsonUrl($url) {
         }
 
         if ($curlCode -eq 0 -and ![string]::IsNullOrWhiteSpace(($curlOutput -join [Environment]::NewLine))) {
-            return (($curlOutput -join [Environment]::NewLine) | ConvertFrom-Json)
+            $jsonText = ($curlOutput -join [Environment]::NewLine).TrimStart([char]0xFEFF)
+            return ($jsonText | ConvertFrom-Json)
         }
 
         throw "URL okunamadi. PowerShell: $lastError Curl: $($curlOutput -join [Environment]::NewLine)"

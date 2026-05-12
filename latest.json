@@ -1,9 +1,9 @@
-﻿{
+{
     "schemaVersion":  1,
     "appId":  "github-pages-manager",
     "appName":  "GitHub Pages Manager",
     "version":  "1.0.4",
-    "publishedAt":  "2026-05-12T23:12:43Z",
+    "publishedAt":  "2026-05-12T23:16:02Z",
     "notes":  [
                   "Guncelleme altyapisi kalici olarak duzeltildi."
               ],
@@ -12,17 +12,16 @@
                      ],
     "latestJsonUrl":  "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/latest.json",
     "errorReportRepo":  "vengeance3355/github-pages-manager-updates",
-    "sourceRef":  "717c39b6f44792c684ae7acb7828b10814f048e9",
+    "sourceRef":  "main",
     "files":  {
                   "managerBat":  {
                                      "name":  "github-pages-manager-1.0.4.bat",
                                      "path":  "releases/github-pages-manager-1.0.4.bat",
-                                     "sha256":  "a0263c04aeeae8b6e8ef49f820b9b453ff5cf87e2d192f823fdcc1f8ffefe793",
-                                     "sizeBytes":  65345,
-                                     "downloadUrl":  "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/717c39b6f44792c684ae7acb7828b10814f048e9/releases/github-pages-manager-1.0.4.bat",
+                                     "sha256":  "ec5ed0870fe004f14e7a44a5ae630ca0edcee8a896a8b00210d2ef414c0b1219",
+                                     "sizeBytes":  65463,
+                                     "downloadUrl":  "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/releases/github-pages-manager-1.0.4.bat",
                                      "alternativeUrls":  [
                                                              "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/releases/github-pages-manager-1.0.4.bat",
-                                                             "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/717c39b6f44792c684ae7acb7828b10814f048e9/github-pages-manager.bat",
                                                              "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/github-pages-manager.bat"
                                                          ]
                                  }
