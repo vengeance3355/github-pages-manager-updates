@@ -11,7 +11,7 @@ exit /b %ERRORLEVEL%
 
 $ErrorActionPreference = "Stop"
 
-$AppVersion = "1.0.0"
+$AppVersion = "1.0.1"
 $UpdateManifestUrl = "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/latest.json"
 $StoreDir = Join-Path $env:APPDATA "GithubPagesPublisher"
 $DbPath = Join-Path $StoreDir "repos.json"
@@ -349,6 +349,57 @@ function Check-ForUpdates {
         Show-Error $_.Exception.Message
         Pause-Back
     }
+}
+
+function Show-UpdateNotes {
+    Header
+
+    $manifestUrl = Get-EffectiveUpdateManifestUrl
+
+    if ([string]::IsNullOrWhiteSpace($manifestUrl)) {
+        Write-Host "Guncelleme kaynagi henuz ayarlanmamis."
+        Write-Host ""
+        Write-Host "Admin BAT ile ilk yayin yapildiktan sonra bu bolum aktif olur."
+        Pause-Back
+        return
+    }
+
+    Write-Host "Guncelleme manifesti:"
+    Write-Host $manifestUrl
+    Write-Host ""
+
+    try {
+        $manifest = Invoke-RestMethod -Uri $manifestUrl -UseBasicParsing
+    }
+    catch {
+        Write-Host "[HATA] Guncelleme notlari okunamadi."
+        Write-Host $_.Exception.Message
+        Pause-Back
+        return
+    }
+
+    Write-Host "Mevcut uygulama surumu: $AppVersion"
+    Write-Host "Yayindaki son surum: $($manifest.version)"
+
+    if (![string]::IsNullOrWhiteSpace($manifest.publishedAt)) {
+        Write-Host "Yayin zamani: $($manifest.publishedAt)"
+    }
+
+    Write-Host ""
+    Write-Host "Guncelleme notlari:"
+
+    $notes = @($manifest.notes)
+
+    if ($notes.Count -eq 0) {
+        Write-Host "- Not yok."
+    }
+    else {
+        foreach ($note in $notes) {
+            Write-Host "- $note"
+        }
+    }
+
+    Pause-Back
 }
 
 function Copy-DeviceLoginCode-IfPresent($text) {
@@ -1577,6 +1628,8 @@ while ($true) {
 
     Header
 
+    Write-Host "Uygulama surumu: $AppVersion"
+    Write-Host ""
     Write-Host "GitHub kullanicisi: $script:GhUser"
     Write-Host "Calisan klasor:"
     Write-Host (Get-Location).Path
@@ -1586,11 +1639,12 @@ while ($true) {
     Write-Host ""
     Write-Host "1) Kayitli repolar"
     Write-Host "2) Kaydet/Guncelle - bu klasoru GitHub Pages'e yayinla"
-    Write-Host "3) Cikis"
+    Write-Host "3) Guncelleme notlari"
+    Write-Host "4) Cikis"
     Write-Host ""
     Write-Host "Secim:"
 
-    $mainChoice = Read-KeyChoice @("1", "2", "3")
+    $mainChoice = Read-KeyChoice @("1", "2", "3", "4")
 
     switch ($mainChoice) {
         "1" {
@@ -1600,6 +1654,9 @@ while ($true) {
             Run-Action { Publish-CurrentFolder }
         }
         "3" {
+            Run-Action { Show-UpdateNotes }
+        }
+        "4" {
             exit 0
         }
     }
