@@ -11,13 +11,13 @@
                          "yayınlama2"
                      ],
     "latestJsonUrl":  "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/latest.json",
-    "sourceRef":  "main",
+    "sourceRef":  "1c83fce6a0e73aad390440802fe30a2982728990",
     "files":  {
                   "managerBat":  {
                                      "name":  "github-pages-manager.bat",
                                      "sha256":  "f16ec7a43b68bafb38e666a38b727336d9fbb563ae4cc0266e270ed1e92571ba",
                                      "sizeBytes":  51407,
-                                     "downloadUrl":  "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/github-pages-manager.bat"
+                                     "downloadUrl":  "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/1c83fce6a0e73aad390440802fe30a2982728990/github-pages-manager.bat"
                                  }
               }
 }
