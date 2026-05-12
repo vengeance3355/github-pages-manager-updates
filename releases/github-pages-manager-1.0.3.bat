@@ -185,28 +185,6 @@ function Invoke-JsonUrl($url) {
     throw "URL okunamadi. PowerShell: $lastError"
 }
 
-function Get-CacheBustedUrl($url) {
-    if ([string]::IsNullOrWhiteSpace($url)) {
-        return $url
-    }
-
-    try {
-        $uri = [UriBuilder]$url
-
-        if (![string]::IsNullOrWhiteSpace($uri.Query)) {
-            $uri.Query = $uri.Query.TrimStart("?") + "&_=" + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-        }
-        else {
-            $uri.Query = "_=" + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-        }
-
-        return $uri.Uri.AbsoluteUri
-    }
-    catch {
-        return $url
-    }
-}
-
 function Save-UrlToFile($url, $outFile) {
     if ([string]::IsNullOrWhiteSpace($url)) {
         throw "Indirme URL'i bos geldi."
@@ -214,7 +192,6 @@ function Save-UrlToFile($url, $outFile) {
 
     $oldProtocol = [Net.ServicePointManager]::SecurityProtocol
     $lastError = $null
-    $downloadUrl = Get-CacheBustedUrl $url
 
     try {
         [Net.ServicePointManager]::SecurityProtocol = $oldProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -222,7 +199,7 @@ function Save-UrlToFile($url, $outFile) {
             "User-Agent" = "GitHubPagesManager"
             "Cache-Control" = "no-cache"
         }
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $outFile -Headers $headers -UseBasicParsing
+        Invoke-WebRequest -Uri $url -OutFile $outFile -Headers $headers -UseBasicParsing
         return
     }
     catch {
@@ -243,7 +220,7 @@ function Save-UrlToFile($url, $outFile) {
                 --header "User-Agent: GitHubPagesManager" `
                 --header "Cache-Control: no-cache" `
                 --output $outFile `
-                $downloadUrl 2>&1
+                $url 2>&1
             $curlCode = $LASTEXITCODE
         }
         finally {
@@ -544,18 +521,8 @@ function Get-UpdateDownloadCandidates($manifest, $manifestUrl) {
 
     $artifactPath = $fileInfo.path
 
-    if ([string]::IsNullOrWhiteSpace($artifactPath) -and ![string]::IsNullOrWhiteSpace($fileInfo.name) -and $fileInfo.name -ne "github-pages-manager.bat") {
+    if ([string]::IsNullOrWhiteSpace($artifactPath) -and ![string]::IsNullOrWhiteSpace($fileInfo.name)) {
         $artifactPath = "releases/$($fileInfo.name)"
-    }
-
-    if ([string]::IsNullOrWhiteSpace($artifactPath) -and ![string]::IsNullOrWhiteSpace($manifest.version)) {
-        $versionSafe = ($manifest.version -replace '[^A-Za-z0-9._-]', '-')
-        $versionSafe = $versionSafe -replace '-+', '-'
-        $versionSafe = $versionSafe.Trim([char[]]"-.")
-
-        if (![string]::IsNullOrWhiteSpace($versionSafe)) {
-            $artifactPath = "releases/github-pages-manager-$versionSafe.bat"
-        }
     }
 
     if (![string]::IsNullOrWhiteSpace($repoFullName) -and ![string]::IsNullOrWhiteSpace($artifactPath)) {
