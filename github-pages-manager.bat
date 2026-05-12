@@ -116,6 +116,83 @@ function Show-Error($message) {
     Write-Host $message
 }
 
+function Invoke-JsonUrl($url) {
+    if ([string]::IsNullOrWhiteSpace($url)) {
+        throw "URL bos geldi."
+    }
+
+    $oldProtocol = [Net.ServicePointManager]::SecurityProtocol
+    $lastError = $null
+
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = $oldProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $headers = @{
+            "User-Agent" = "GitHubPagesManager"
+            "Cache-Control" = "no-cache"
+        }
+        $uri = [UriBuilder]$url
+        $separator = ""
+
+        if (![string]::IsNullOrWhiteSpace($uri.Query)) {
+            $separator = "&"
+            $uri.Query = $uri.Query.TrimStart("?") + $separator + "_=" + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        }
+        else {
+            $uri.Query = "_=" + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        }
+
+        return Invoke-RestMethod -Uri $uri.Uri.AbsoluteUri -Headers $headers -UseBasicParsing
+    }
+    catch {
+        $lastError = $_.Exception.Message
+    }
+    finally {
+        [Net.ServicePointManager]::SecurityProtocol = $oldProtocol
+    }
+
+    $curl = Get-Command "curl.exe" -ErrorAction SilentlyContinue
+
+    if ($null -ne $curl) {
+        $oldCurlPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+
+        try {
+            $curlOutput = & curl.exe --location --silent --show-error --fail --ssl-no-revoke `
+                --header "User-Agent: GitHubPagesManager" `
+                --header "Cache-Control: no-cache" `
+                $url 2>&1
+            $curlCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $oldCurlPreference
+        }
+
+        if ($curlCode -eq 0 -and ![string]::IsNullOrWhiteSpace(($curlOutput -join [Environment]::NewLine))) {
+            return (($curlOutput -join [Environment]::NewLine) | ConvertFrom-Json)
+        }
+
+        throw "URL okunamadi. PowerShell: $lastError Curl: $($curlOutput -join [Environment]::NewLine)"
+    }
+
+    throw "URL okunamadi. PowerShell: $lastError"
+}
+
+function Get-ManifestNotes($manifest) {
+    if ($null -eq $manifest -or $null -eq $manifest.notes) {
+        return @()
+    }
+
+    $notes = @()
+
+    foreach ($note in @($manifest.notes)) {
+        if (![string]::IsNullOrWhiteSpace([string]$note)) {
+            $notes += ([string]$note).Trim()
+        }
+    }
+
+    return $notes
+}
+
 function Get-EffectiveUpdateManifestUrl {
     if (![string]::IsNullOrWhiteSpace($UpdateManifestUrl) -and $UpdateManifestUrl -notmatch '^__.*__$') {
         return $UpdateManifestUrl
@@ -153,6 +230,21 @@ function Load-UpdateState {
 
     try {
         return Get-Content -LiteralPath $UpdateStatePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+    catch {
+        return $null
+    }
+}
+
+function Get-LocalAdminManifest {
+    $manifestPath = Join-Path $env:APPDATA "GithubPagesPublisherAdmin\update-repo\latest.json"
+
+    if (!(Test-Path $manifestPath)) {
+        return $null
+    }
+
+    try {
+        return Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
     }
     catch {
         return $null
@@ -288,10 +380,14 @@ function Check-ForUpdates {
     }
 
     try {
-        $manifest = Invoke-RestMethod -Uri $manifestUrl -UseBasicParsing
+        $manifest = Invoke-JsonUrl $manifestUrl
     }
     catch {
-        return
+        $manifest = Get-LocalAdminManifest
+
+        if ($null -eq $manifest) {
+            return
+        }
     }
 
     if ($null -eq $manifest) {
@@ -320,7 +416,7 @@ function Check-ForUpdates {
     Write-Host ""
     Write-Host "Guncelleme notlari:"
 
-    foreach ($note in @($manifest.notes)) {
+    foreach ($note in @(Get-ManifestNotes $manifest)) {
         Write-Host "- $note"
     }
 
@@ -369,13 +465,21 @@ function Show-UpdateNotes {
     Write-Host ""
 
     try {
-        $manifest = Invoke-RestMethod -Uri $manifestUrl -UseBasicParsing
+        $manifest = Invoke-JsonUrl $manifestUrl
     }
     catch {
-        Write-Host "[HATA] Guncelleme notlari okunamadi."
-        Write-Host $_.Exception.Message
-        Pause-Back
-        return
+        $remoteError = $_.Exception.Message
+        $manifest = Get-LocalAdminManifest
+
+        if ($null -eq $manifest) {
+            Write-Host "[HATA] Guncelleme notlari okunamadi."
+            Write-Host $remoteError
+            Pause-Back
+            return
+        }
+
+        Write-Host "[UYARI] GitHub manifesti okunamadi. Yerel son kopya gosteriliyor."
+        Write-Host ""
     }
 
     Write-Host "Mevcut uygulama surumu: $AppVersion"
@@ -388,7 +492,7 @@ function Show-UpdateNotes {
     Write-Host ""
     Write-Host "Guncelleme notlari:"
 
-    $notes = @($manifest.notes)
+    $notes = @(Get-ManifestNotes $manifest)
 
     if ($notes.Count -eq 0) {
         Write-Host "- Not yok."
