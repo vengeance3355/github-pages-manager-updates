@@ -11,7 +11,7 @@ exit /b %ERRORLEVEL%
 
 $ErrorActionPreference = "Stop"
 
-$AppVersion = "1.0.1"
+$AppVersion = "1.0.0"
 $UpdateManifestUrl = "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/latest.json"
 $StoreDir = Join-Path $env:APPDATA "GithubPagesPublisher"
 $DbPath = Join-Path $StoreDir "repos.json"
@@ -141,7 +141,13 @@ function Invoke-JsonUrl($url) {
             $uri.Query = "_=" + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
         }
 
-        return Invoke-RestMethod -Uri $uri.Uri.AbsoluteUri -Headers $headers -UseBasicParsing
+        $response = Invoke-RestMethod -Uri $uri.Uri.AbsoluteUri -Headers $headers -UseBasicParsing
+
+        if ($response -is [string]) {
+            return ($response | ConvertFrom-Json)
+        }
+
+        return $response
     }
     catch {
         $lastError = $_.Exception.Message
@@ -405,6 +411,11 @@ function Check-ForUpdates {
     }
 
     $localManifest = Get-LocalAdminManifest
+
+    if ([string]::IsNullOrWhiteSpace($manifest.version) -and $null -ne $localManifest) {
+        $manifest = $localManifest
+    }
+
     $manifestNotes = @(Get-ManifestNotes $manifest)
 
     if ($manifestNotes.Count -eq 0 -and $null -ne $localManifest -and $localManifest.version -eq $manifest.version) {
@@ -506,6 +517,13 @@ function Show-UpdateNotes {
     }
 
     $localManifest = Get-LocalAdminManifest
+
+    if ([string]::IsNullOrWhiteSpace($manifest.version) -and $null -ne $localManifest) {
+        $manifest = $localManifest
+        Write-Host "[UYARI] GitHub manifesti beklenen formatta degil. Yerel son kopya gosteriliyor."
+        Write-Host ""
+    }
+
     $notes = @(Get-ManifestNotes $manifest)
 
     if ($notes.Count -eq 0 -and $null -ne $localManifest -and $localManifest.version -eq $manifest.version) {

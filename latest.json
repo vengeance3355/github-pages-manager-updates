@@ -2,8 +2,8 @@
     "schemaVersion":  1,
     "appId":  "github-pages-manager",
     "appName":  "GitHub Pages Manager",
-    "version":  "1.0.1",
-    "publishedAt":  "2026-05-12T22:21:15Z",
+    "version":  "1.0.0",
+    "publishedAt":  "2026-05-12T22:24:19Z",
     "notes":  [
                   "yayınlama"
               ],
@@ -14,8 +14,8 @@
     "files":  {
                   "managerBat":  {
                                      "name":  "github-pages-manager.bat",
-                                     "sha256":  "ea56636c127be4b648438341f16d615cc75f0791ab2343cc7e939973e52beff6",
-                                     "sizeBytes":  50119,
+                                     "sha256":  "a4a6b91f376a165fa6ff5eca18e173f19649620d35adb2624be4d16544cc94c1",
+                                     "sizeBytes":  50654,
                                      "downloadUrl":  "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/github-pages-manager.bat"
                                  }
               }
