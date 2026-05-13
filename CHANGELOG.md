@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.8 - 2026-05-13T00:37:29Z
+
+### Fixed
+- Güncelleme veya yeni repo oluşumunda olan bir hata düzeltildi
+
 ## 1.0.7 - 2026-05-13T00:29:22Z
 
 ### Fixed
