@@ -29,16 +29,17 @@
                          },
     "latestJsonUrl":  "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/latest.json",
     "errorReportRepo":  "vengeance3355/github-pages-manager-updates",
-    "sourceRef":  "main",
+    "sourceRef":  "a521ada029e005d1a76abbb7387c6ff376263f92",
     "files":  {
                   "managerBat":  {
                                      "name":  "github-pages-manager-1.0.9.bat",
                                      "path":  "releases/github-pages-manager-1.0.9.bat",
                                      "sha256":  "846e9483fb440f48693e4a8a63d896c0803a5ba126e0bd90e283c87856e2d3c2",
                                      "sizeBytes":  80969,
-                                     "downloadUrl":  "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/releases/github-pages-manager-1.0.9.bat",
+                                     "downloadUrl":  "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/a521ada029e005d1a76abbb7387c6ff376263f92/releases/github-pages-manager-1.0.9.bat",
                                      "alternativeUrls":  [
                                                              "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/releases/github-pages-manager-1.0.9.bat",
+                                                             "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/a521ada029e005d1a76abbb7387c6ff376263f92/github-pages-manager.bat",
                                                              "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/github-pages-manager.bat"
                                                          ]
                                  }
