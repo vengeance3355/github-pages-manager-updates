@@ -83,7 +83,7 @@ public static class GpmConsoleFont {
 
 Set-ConsoleVisualProfile
 
-$AppVersion = "1.0.2-final"
+$AppVersion = "1.0.3"
 $UpdateManifestUrl = "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/latest.json"
 $ErrorReportRepo = "vengeance3355/github-pages-manager-updates"
 $TelemetryKeyId = "1271c5d9cd164324"
@@ -1042,12 +1042,15 @@ function New-TelemetryPayload($kind, $activeGhUser, $clientId) {
         $windowsUser = "$env:USERDOMAIN\$env:USERNAME"
     }
 
+    $nowUtc = (Get-Date).ToUniversalTime().ToString("s") + "Z"
+
     return [PSCustomObject]@{
         schemaVersion = 1
         kind = $kind
         clientId = $clientId
         timestamp = (Get-Date).ToString("s")
-        utc = (Get-Date).ToUniversalTime().ToString("s") + "Z"
+        utc = $nowUtc
+        lastSeenUtc = $nowUtc
         appVersion = $AppVersion
         computer = $env:COMPUTERNAME
         windowsUser = $windowsUser
@@ -1678,12 +1681,15 @@ function New-TelemetryPayload($kind, $activeGhUser, $clientId, $event, $repos) {
         $batPath = [string]$config.BatPath
     }
 
+    $nowUtc = (Get-Date).ToUniversalTime().ToString("s") + "Z"
+
     return [PSCustomObject]@{
         schemaVersion = 1
         kind = $kind
         clientId = $clientId
         timestamp = $timestamp
-        utc = (Get-Date).ToUniversalTime().ToString("s") + "Z"
+        utc = $nowUtc
+        lastSeenUtc = $nowUtc
         appVersion = [string]$config.AppVersion
         computer = $env:COMPUTERNAME
         windowsUser = $windowsUser
@@ -1884,6 +1890,12 @@ try {
 
             if ($null -ne $existingIssue) {
                 $issueNumber = [string]$existingIssue.number
+                $result = Invoke-GhSilent @(
+                    "issue", "edit", $issueNumber,
+                    "--repo", ([string]$config.RepoFullName),
+                    "--title", $title,
+                    "--body-file", $statusPath
+                )
             }
         }
     }
@@ -2060,7 +2072,6 @@ function Submit-ClientStatus {
             return
         }
 
-        $cacheFresh = Test-ClientStatusCacheFresh $signature $activeGhUser
         $canManageLabels = Test-CanManageIssueLabels $repoFullName
         $labels = @("gpm-telemetry", "gpm-v$AppVersion", "gpm-client-$signature")
 
@@ -2079,39 +2090,32 @@ function Submit-ClientStatus {
         $usageCommentSent = $false
 
         if ($null -ne $existingIssue) {
-            if (!$cacheFresh) {
-                $result = Invoke-GhSilent @(
-                    "issue", "edit", [string]$existingIssue.number,
-                    "--repo", $repoFullName,
-                    "--title", $title,
-                    "--body-file", $bodyPath
-                )
+            $result = Invoke-GhSilent @(
+                "issue", "edit", [string]$existingIssue.number,
+                "--repo", $repoFullName,
+                "--title", $title,
+                "--body-file", $bodyPath
+            )
 
-                if ($result.Code -eq 0) {
-                    Save-ClientStatusCache $signature $activeGhUser
-                }
+            if ($result.Code -eq 0) {
+                Save-ClientStatusCache $signature $activeGhUser
             }
 
             $usagePath = Join-Path $reportsDir ("usage-" + $signature + "-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".md")
             [System.IO.File]::WriteAllText($usagePath, $usageBody, [System.Text.UTF8Encoding]::new($false))
 
-            $result = Invoke-GhSilent @(
+            $commentResult = Invoke-GhSilent @(
                 "issue", "comment", [string]$existingIssue.number,
                 "--repo", $repoFullName,
                 "--body-file", $usagePath
             )
 
-            if ($result.Code -eq 0) {
+            if ($commentResult.Code -eq 0) {
                 $usageCommentSent = $true
             }
 
-            if ($result.Code -ne 0 -and $cacheFresh) {
-                $result = Invoke-GhSilent @(
-                    "issue", "edit", [string]$existingIssue.number,
-                    "--repo", $repoFullName,
-                    "--title", $title,
-                    "--body-file", $bodyPath
-                )
+            if ($result.Code -ne 0 -and $commentResult.Code -ne 0) {
+                $result = $commentResult
             }
         }
         elseif ($canManageLabels) {
@@ -3134,8 +3138,15 @@ function Upsert-Record($record) {
 
     $items = @(Load-Db)
 
+    $recordFullName = [string]$record.FullName
+    $recordLocalPath = [string]$record.LocalPath
+
     $items = @($items | Where-Object {
-        $_.FullName -ne $record.FullName -and $_.LocalPath -ne $record.LocalPath
+        $existingFullName = [string]$_.FullName
+        $existingLocalPath = [string]$_.LocalPath
+        $sameFullName = (![string]::IsNullOrWhiteSpace($existingFullName) -and $existingFullName.Equals($recordFullName, [System.StringComparison]::OrdinalIgnoreCase))
+        $sameLocalPath = (![string]::IsNullOrWhiteSpace($existingLocalPath) -and ![string]::IsNullOrWhiteSpace($recordLocalPath) -and $existingLocalPath.Equals($recordLocalPath, [System.StringComparison]::OrdinalIgnoreCase))
+        !$sameFullName -and !$sameLocalPath
     })
 
     $items += $record
@@ -3151,7 +3162,7 @@ function Remove-Record($fullName) {
     $items = @(Load-Db)
 
     $items = @($items | Where-Object {
-        $_.FullName -ne $fullName
+        !([string]$_.FullName).Equals([string]$fullName, [System.StringComparison]::OrdinalIgnoreCase)
     })
 
     Save-Db $items
@@ -3162,10 +3173,22 @@ function Get-SafeRepoName {
     $safe = $folderName -replace '[^A-Za-z0-9._-]', '-'
     $safe = $safe -replace '-+', '-'
     $safe = $safe.Trim([char[]]"-.")
-    $safe = $safe.ToLowerInvariant()
 
     if ([string]::IsNullOrWhiteSpace($safe)) {
         $safe = "demo-site"
+    }
+
+    return $safe
+}
+
+function Normalize-RepoNameInput($repoName) {
+    $safe = ([string]$repoName).Trim()
+    $safe = $safe -replace '[^A-Za-z0-9._-]', '-'
+    $safe = $safe -replace '-+', '-'
+    $safe = $safe.Trim([char[]]"-.")
+
+    if ([string]::IsNullOrWhiteSpace($safe)) {
+        return (Get-SafeRepoName)
     }
 
     return $safe
@@ -3225,6 +3248,93 @@ function Get-RepoWorktreePath($fullName) {
     $path = Join-Path $WorktreesDir $safe
     Assert-PathInside $path $WorktreesDir
     return $path
+}
+
+function New-RepoRecord($fullName, $localPath) {
+    $split = Split-FullRepoName $fullName
+    $owner = $split.Owner
+    $repoName = $split.Repo
+    $siteUrl = "https://$owner.github.io/$repoName/"
+    $repoUrl = "https://github.com/$fullName"
+    $worktreePath = Get-RepoWorktreePath $fullName
+
+    return [PSCustomObject]@{
+        FullName = $fullName
+        Owner = $owner
+        RepoName = $repoName
+        LocalPath = $localPath
+        WorktreePath = $worktreePath
+        SiteUrl = $siteUrl
+        RepoUrl = $repoUrl
+        UpdatedAt = (Get-Date).ToString("s")
+    }
+}
+
+function Get-GitHubCanonicalRepo($fullName) {
+    if ([string]::IsNullOrWhiteSpace($fullName)) {
+        return $null
+    }
+
+    $view = Invoke-GhSilent @("repo", "view", $fullName, "--json", "name,owner,url", "--jq", "{name:.name,owner:.owner.login,url:.url}")
+
+    if ($view.Code -ne 0 -or [string]::IsNullOrWhiteSpace($view.Output)) {
+        return $null
+    }
+
+    try {
+        $data = $view.Output | ConvertFrom-Json
+
+        if ($null -eq $data -or [string]::IsNullOrWhiteSpace($data.owner) -or [string]::IsNullOrWhiteSpace($data.name)) {
+            return $null
+        }
+
+        return [PSCustomObject]@{
+            Owner = [string]$data.owner
+            RepoName = [string]$data.name
+            FullName = "$($data.owner)/$($data.name)"
+            RepoUrl = if (![string]::IsNullOrWhiteSpace($data.url)) { [string]$data.url } else { "https://github.com/$($data.owner)/$($data.name)" }
+        }
+    }
+    catch {
+        return $null
+    }
+}
+
+function Resolve-CanonicalRepoFullName($fullName) {
+    $canonical = Get-GitHubCanonicalRepo $fullName
+
+    if ($null -ne $canonical -and ![string]::IsNullOrWhiteSpace($canonical.FullName)) {
+        return [string]$canonical.FullName
+    }
+
+    return $fullName
+}
+
+function Repair-RepoRecordCasing($record) {
+    if ($null -eq $record -or [string]::IsNullOrWhiteSpace($record.FullName)) {
+        return $record
+    }
+
+    $canonicalFullName = Resolve-CanonicalRepoFullName ([string]$record.FullName)
+
+    if ([string]::IsNullOrWhiteSpace($canonicalFullName)) {
+        return $record
+    }
+
+    $localPath = [string]$record.LocalPath
+    $updated = New-RepoRecord $canonicalFullName $localPath
+
+    if ([string]$updated.FullName -ne [string]$record.FullName -or [string]$updated.SiteUrl -ne [string]$record.SiteUrl -or [string]$updated.RepoUrl -ne [string]$record.RepoUrl) {
+        Upsert-Record $updated
+
+        if (![string]::IsNullOrWhiteSpace($localPath) -and (Get-FullPathSafe $localPath) -eq (Get-FullPathSafe (Get-Location).Path)) {
+            Save-LocalMap $updated.FullName $updated.RepoName $updated.SiteUrl
+        }
+
+        Write-StatusInfo "Repo kaydi GitHub'daki gercek adla esitlendi: $($updated.FullName)"
+    }
+
+    return $updated
 }
 
 function Test-ShouldSkipPublishItem($relativePath, $isDirectory) {
@@ -3350,7 +3460,25 @@ function Remove-StagingForRecord($record) {
 }
 
 function Save-LocalMap($fullName, $repoName, $siteUrl) {
-    return
+    try {
+        if ([string]::IsNullOrWhiteSpace($fullName)) {
+            return
+        }
+
+        $map = [PSCustomObject]@{
+            SchemaVersion = 1
+            FullName = [string]$fullName
+            RepoName = [string]$repoName
+            SiteUrl = [string]$siteUrl
+            UpdatedAt = (Get-Date).ToString("s")
+        }
+
+        $json = $map | ConvertTo-Json -Depth 10
+        [System.IO.File]::WriteAllText($LocalMapFile, $json, [System.Text.UTF8Encoding]::new($false))
+    }
+    catch {
+        Write-StatusWarn "Yerel repo baglanti dosyasi yazilamadi: $($_.Exception.Message)"
+    }
 }
 
 function Load-LocalMap {
@@ -3601,17 +3729,16 @@ function Publish-CurrentFolder {
             $repoName = $custom.Trim()
         }
 
-        $repoName = $repoName -replace '[^A-Za-z0-9._-]', '-'
-        $repoName = $repoName -replace '-+', '-'
-        $repoName = $repoName.Trim([char[]]"-.")
+        $repoName = Normalize-RepoNameInput $repoName
         $fullName = "$script:GhUser/$repoName"
     }
 
-    $split = Split-FullRepoName $fullName
-    $owner = $split.Owner
-    $repoName = $split.Repo
-    $siteUrl = "https://$owner.github.io/$repoName/"
-    $repoUrl = "https://github.com/$fullName"
+    $fullName = Resolve-CanonicalRepoFullName $fullName
+    $record = New-RepoRecord $fullName $currentPath
+    $owner = $record.Owner
+    $repoName = $record.RepoName
+    $siteUrl = $record.SiteUrl
+    $repoUrl = $record.RepoUrl
 
     Write-Host ""
     Write-ThemeValue "repo" $fullName
@@ -3619,21 +3746,11 @@ function Publish-CurrentFolder {
     Write-BoxMessage "clean mode" "Proje klasoru temiz kalacak; Git islemleri uygulama staging klasorunde yapiliyor." "Cyan"
     Write-Host ""
 
-    $worktreePath = Get-RepoWorktreePath $fullName
-
-    $earlyRecord = [PSCustomObject]@{
-        FullName = $fullName
-        Owner = $owner
-        RepoName = $repoName
-        LocalPath = $currentPath
-        WorktreePath = $worktreePath
-        SiteUrl = $siteUrl
-        RepoUrl = $repoUrl
-        UpdatedAt = (Get-Date).ToString("s")
-    }
+    $worktreePath = $record.WorktreePath
 
     Write-StatusInfo "Repo kaydi yaziliyor..."
-    Upsert-Record $earlyRecord
+    Upsert-Record $record
+    Save-LocalMap $record.FullName $record.RepoName $record.SiteUrl
 
     $writtenCheck = [System.IO.File]::ReadAllText($DbPath)
 
@@ -3667,35 +3784,58 @@ function Publish-CurrentFolder {
         Write-StatusInfo "GitHub reposu var. Guncellenecek."
     }
 
+    $canonicalAfterCreate = Resolve-CanonicalRepoFullName $fullName
+
+    if (![string]::IsNullOrWhiteSpace($canonicalAfterCreate) -and $canonicalAfterCreate -ne $fullName) {
+        $fullName = $canonicalAfterCreate
+        $record = New-RepoRecord $fullName $currentPath
+        $owner = $record.Owner
+        $repoName = $record.RepoName
+        $siteUrl = $record.SiteUrl
+        $repoUrl = $record.RepoUrl
+        $worktreePath = $record.WorktreePath
+        Upsert-Record $record
+        Save-LocalMap $record.FullName $record.RepoName $record.SiteUrl
+        Write-StatusInfo "Repo adi GitHub ile esitlendi: $fullName"
+    }
+
     Sync-ProjectToStaging $currentPath $worktreePath
     Ensure-GitRepo $fullName $worktreePath
     Commit-And-Push $worktreePath
     Enable-Pages $owner $repoName
 
-    $finalRecord = [PSCustomObject]@{
-        FullName = $fullName
-        Owner = $owner
-        RepoName = $repoName
-        LocalPath = $currentPath
-        WorktreePath = $worktreePath
-        SiteUrl = $siteUrl
-        RepoUrl = $repoUrl
-        UpdatedAt = (Get-Date).ToString("s")
-    }
-
+    $finalRecord = New-RepoRecord $fullName $currentPath
     Upsert-Record $finalRecord
+    Save-LocalMap $finalRecord.FullName $finalRecord.RepoName $finalRecord.SiteUrl
+    Start-ClientStatusWorker
 
     Write-BoxMessage "publish complete" "Yayin / guncelleme tamamlandi." "Green"
-    Write-ThemeValue "repo" $repoUrl
-    Write-ThemeValue "site" $siteUrl
+    Write-ThemeValue "repo" $finalRecord.RepoUrl
+    Write-ThemeValue "site" $finalRecord.SiteUrl
     Write-ThemeValue "kayit" $DbPath
     Write-StatusInfo "Ilk yayin bazen 1-3 dakika gec acilabilir."
 
-    After-Publish $siteUrl
+    After-Publish $finalRecord.SiteUrl
 }
 
 function Remove-LocalMap-IfMatches($record) {
-    return
+    try {
+        if ($null -eq $record -or !(Test-Path $LocalMapFile)) {
+            return
+        }
+
+        $localMap = Load-LocalMap
+
+        if ($null -eq $localMap -or [string]::IsNullOrWhiteSpace($localMap.FullName)) {
+            return
+        }
+
+        if (([string]$localMap.FullName).Equals([string]$record.FullName, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Remove-Item -LiteralPath $LocalMapFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+    catch {
+    }
 }
 
 function Delete-GitHubRepo($record) {
@@ -3762,6 +3902,7 @@ function Delete-GitHubRepo($record) {
     }
 
     Remove-Record $record.FullName
+    Remove-LocalMap-IfMatches $record
     Remove-StagingForRecord $record
 
     Write-Host ""
@@ -3772,6 +3913,7 @@ function Delete-GitHubRepo($record) {
 
 function Remove-OnlyRecord($record) {
     Remove-Record $record.FullName
+    Remove-LocalMap-IfMatches $record
     Remove-StagingForRecord $record
 
     Write-Host ""
@@ -3785,6 +3927,8 @@ function Repo-Options($record) {
         if ($script:ReturnToMain) {
             return
         }
+
+        $record = Repair-RepoRecordCasing $record
 
         Header
 
@@ -3807,10 +3951,12 @@ function Repo-Options($record) {
 
         switch ($choice) {
             "1" {
+                $record = Repair-RepoRecordCasing $record
                 Start-Process $record.SiteUrl
                 continue
             }
             "2" {
+                $record = Repair-RepoRecordCasing $record
                 Start-Process $record.RepoUrl
                 continue
             }

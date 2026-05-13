@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
 set "BAT_FILE=%~f0"
@@ -11,17 +12,170 @@ exit /b %ERRORLEVEL%
 
 $ErrorActionPreference = "Stop"
 
+try {
+    $script:Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    [Console]::InputEncoding = $script:Utf8NoBom
+    [Console]::OutputEncoding = $script:Utf8NoBom
+    $OutputEncoding = $script:Utf8NoBom
+}
+catch {
+}
+
+function Set-ConsoleVisualProfile {
+    try {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class GpmConsoleFont {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct COORD {
+        public short X;
+        public short Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct CONSOLE_FONT_INFOEX {
+        public uint cbSize;
+        public uint nFont;
+        public COORD dwFontSize;
+        public int FontFamily;
+        public int FontWeight;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string FaceName;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr GetStdHandle(int nStdHandle);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool SetCurrentConsoleFontEx(IntPtr consoleOutput, bool maximumWindow, ref CONSOLE_FONT_INFOEX consoleCurrentFontEx);
+}
+"@ -ErrorAction SilentlyContinue
+
+        $handle = [GpmConsoleFont]::GetStdHandle(-11)
+
+        foreach ($height in @(32, 30, 28, 26, 24, 22)) {
+            $font = New-Object GpmConsoleFont+CONSOLE_FONT_INFOEX
+            $font.cbSize = [Runtime.InteropServices.Marshal]::SizeOf([type]"GpmConsoleFont+CONSOLE_FONT_INFOEX")
+            $font.nFont = 0
+            $font.dwFontSize = New-Object GpmConsoleFont+COORD
+            $font.dwFontSize.X = 0
+            $font.dwFontSize.Y = [int16]$height
+            $font.FontFamily = 54
+            $font.FontWeight = 400
+            $font.FaceName = "Consolas"
+
+            if ([GpmConsoleFont]::SetCurrentConsoleFontEx($handle, $false, [ref]$font)) {
+                break
+            }
+        }
+    }
+    catch {
+    }
+
+    try {
+        mode con: cols=100 lines=30 | Out-Null
+    }
+    catch {
+    }
+}
+
+Set-ConsoleVisualProfile
+
 $AppVersion = "1.0.3"
 $UpdateManifestUrl = "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/latest.json"
 $ErrorReportRepo = "vengeance3355/github-pages-manager-updates"
+$TelemetryKeyId = "1271c5d9cd164324"
+$TelemetryPublicKey = "PFJTQUtleVZhbHVlPjxNb2R1bHVzPnlERlVabnlhMGpac2diQ1d4NnBPNXJ0aCtZVmJBSm5VelNxVW13OG1OWjh0RVNZMXBJaWRqRXZ2YVBVMHoyUHd1SlFFSTVBUHIrNnFmeHJSVzB5ZHZPY2l4VFJsdkViNmttZkRwR2ZKZGVoWWp4R0hRWWRwRVUrM1hQT3d3RXJsemRVQkpOOXJTWDBUL2YxeGtRenhsSGVUNTRKUDlFMnpOb1dLbTRYU3g2VG1vSURqeW9FcXJLSnFOVnU2M2Z5SHltVnU3aW50OGhUNkFNaFBsUHV1akl5c3Q0M25GWDU2M2dMaENSakttdzNBbSt6QU8veTNyMUE4bWwwRExMRlQ3bXZyM2tudllQWTdEZE9WUUQ4V2VNTlMyMEJOUlF5a2kxclpFYlUxYldkcE1Oc2xVTW9kK1VGRHg5MGFxZmU3UWJSTVdKS3g2cjBDSzhhVGFNSzhGUT09PC9Nb2R1bHVzPjxFeHBvbmVudD5BUUFCPC9FeHBvbmVudD48L1JTQUtleVZhbHVlPg=="
 $StoreDir = Join-Path $env:APPDATA "GithubPagesPublisher"
 $DbPath = Join-Path $StoreDir "repos.json"
+$WorktreesDir = Join-Path $StoreDir "worktrees"
+$UpdateCheckCachePath = Join-Path $StoreDir "update-check.json"
+$ClientStatusCachePath = Join-Path $StoreDir "client-status.json"
+$ClientStatusDiagPath = Join-Path $StoreDir "client-status-last.json"
+$ClientStatusSchemaVersion = 3
+$HttpTimeoutSeconds = 5
 $AdminConfigPath = Join-Path $env:APPDATA "GithubPagesPublisherAdmin\admin.json"
 $LocalMapFile = ".gh-pages-publisher.json"
+$StartupDiagPath = Join-Path $StoreDir "startup-last.json"
+$TelemetryQueueDir = Join-Path $StoreDir "telemetry-queue"
+$TelemetryWorkerPath = Join-Path $StoreDir "client-status-worker.ps1"
+$TelemetryWorkerLockPath = Join-Path $StoreDir "client-status-worker.lock"
 $script:ReturnToMain = $false
 $script:GhUser = $null
 $script:LastOpenedDeviceLoginUrl = $null
 $script:IsSendingErrorReport = $false
+$script:IsSendingClientStatus = $false
+
+function Write-ThemeLine($text = "", $color = "Gray") {
+    Write-Host $text -ForegroundColor $color
+}
+
+function Write-ThemeValue($label, $value) {
+    Write-Host ("[sys] {0,-12}: " -f $label) -ForegroundColor DarkGray -NoNewline
+    Write-Host $value -ForegroundColor Green
+}
+
+function Format-GpmDateTime($value) {
+    if ([string]::IsNullOrWhiteSpace([string]$value)) {
+        return "bilinmiyor"
+    }
+
+    $text = ([string]$value).Trim()
+
+    try {
+        if ($text -match '(Z|[+-]\d{2}:\d{2})$') {
+            return ([DateTimeOffset]::Parse($text, [Globalization.CultureInfo]::InvariantCulture)).ToLocalTime().ToString("dd.MM.yyyy HH:mm:ss")
+        }
+
+        return ([DateTime]::Parse($text, [Globalization.CultureInfo]::InvariantCulture)).ToString("dd.MM.yyyy HH:mm:ss")
+    }
+    catch {
+        return $text
+    }
+}
+
+function Write-MenuItem($key, $text) {
+    Write-Host ("  [{0}] " -f $key) -ForegroundColor Cyan -NoNewline
+    Write-Host $text -ForegroundColor White
+}
+
+function Write-SectionTitle($text) {
+    Write-Host ("+-- {0} -----------------------------------+" -f $text) -ForegroundColor DarkCyan
+}
+
+function Write-StatusInfo($message) {
+    Write-Host ("[info] {0}" -f $message) -ForegroundColor DarkCyan
+}
+
+function Write-StatusOk($message) {
+    Write-Host ("[ ok ] {0}" -f $message) -ForegroundColor Green
+}
+
+function Write-StatusWarn($message) {
+    Write-Host ("[warn] {0}" -f $message) -ForegroundColor Yellow
+}
+
+function Write-KeyPrompt($label = "secim") {
+    Write-Host ("> {0}:" -f $label) -ForegroundColor Green
+}
+
+function Write-MenuFrame($title, [scriptblock]$body) {
+    Write-Host ("+-- {0} -----------------------------------+" -f $title) -ForegroundColor DarkCyan
+    & $body
+    Write-Host "+---------------------------------------------------+" -ForegroundColor DarkCyan
+}
+
+function Write-BoxMessage($title, $message, $color) {
+    Write-Host ""
+    Write-Host "+-- $title ----------------------------------------" -ForegroundColor $color
+    foreach ($line in ([string]$message -split "`r?`n")) {
+        Write-Host "| " -ForegroundColor $color -NoNewline
+        Write-Host $line -ForegroundColor White
+    }
+    Write-Host "+--------------------------------------------------" -ForegroundColor $color
+}
 
 function Ensure-Storage {
     if (!(Test-Path $StoreDir)) {
@@ -49,9 +203,10 @@ function Ensure-Storage {
 
 function Header {
     Clear-Host
-    Write-Host "===================================================="
-    Write-Host " GitHub Pages Manager"
-    Write-Host "===================================================="
+    Write-Host "+==================================================+" -ForegroundColor Cyan
+    Write-Host "|  GITHUB PAGES MANAGER                            |" -ForegroundColor Cyan
+    Write-Host "|  yayin node // update bridge // issue uplink     |" -ForegroundColor DarkCyan
+    Write-Host "+==================================================+" -ForegroundColor Cyan
     Write-Host ""
 }
 
@@ -68,8 +223,8 @@ function Read-KeyChoice($allowedKeys) {
 
 function After-Action {
     Write-Host ""
-    Write-Host "1) Ana menu"
-    Write-Host "2) Kapat"
+    Write-MenuItem "1" "Ana menu"
+    Write-MenuItem "2" "Kapat"
     Write-Host ""
 
     $choice = Read-KeyChoice @("1", "2")
@@ -83,9 +238,9 @@ function After-Action {
 
 function After-Publish($siteUrl) {
     Write-Host ""
-    Write-Host "1) Ana menu"
-    Write-Host "2) Kapat"
-    Write-Host "3) Siteyi ac"
+    Write-MenuItem "1" "Ana menu"
+    Write-MenuItem "2" "Kapat"
+    Write-MenuItem "3" "Siteyi ac"
     Write-Host ""
 
     $choice = Read-KeyChoice @("1", "2", "3")
@@ -105,17 +260,56 @@ function After-Publish($siteUrl) {
 
 function Pause-Back {
     Write-Host ""
-    Write-Host "0) Geri"
+    Write-MenuItem "0" "Geri"
     Write-Host ""
 
     Read-KeyChoice @("0") | Out-Null
 }
 
+function Get-FriendlyErrorSummary($message) {
+    $text = [string]$message
+    $lower = $text.ToLowerInvariant()
+
+    if ($lower -match "sha256|hash|dogrulama") {
+        return "Guncelleme dosyasi dogrulanamadi. Dosya bozuk, eski cache veya yanlis release olabilir."
+    }
+
+    if ($lower -match "auth|login|token|credential|giris|yetki") {
+        return "GitHub girisi veya yetkisiyle ilgili bir sorun var."
+    }
+
+    if ($lower -match "push|commit|remote|git ") {
+        return "Git/GitHub yukleme islemi tamamlanamadi."
+    }
+
+    if ($lower -match "repo.*sil|delete_repo|silinemedi") {
+        return "Repo silme islemi tamamlanamadi."
+    }
+
+    if ($text.Length -gt 160) {
+        return $text.Substring(0, 160) + "..."
+    }
+
+    return $text
+}
+
 function Show-Error($message) {
-    Write-Host ""
-    Write-Host "[HATA]"
-    Write-Host $message
+    $summary = Get-FriendlyErrorSummary $message
+    Write-BoxMessage "error signal" $summary "Red"
     Submit-ErrorReport $message
+
+    if ($summary -ne [string]$message) {
+        Write-Host ""
+        Write-MenuItem "1" "Teknik detayi goster"
+        Write-MenuItem "0" "Devam"
+        Write-Host ""
+
+        $choice = Read-KeyChoice @("1", "0")
+
+        if ($choice -eq "1") {
+            Write-BoxMessage "technical detail" $message "DarkRed"
+        }
+    }
 }
 
 function Invoke-JsonUrl($url) {
@@ -143,10 +337,11 @@ function Invoke-JsonUrl($url) {
             $uri.Query = "_=" + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
         }
 
-        $response = Invoke-RestMethod -Uri $uri.Uri.AbsoluteUri -Headers $headers -UseBasicParsing
+        $response = Invoke-RestMethod -Uri $uri.Uri.AbsoluteUri -Headers $headers -TimeoutSec $HttpTimeoutSeconds -UseBasicParsing
 
         if ($response -is [string]) {
-            return ($response | ConvertFrom-Json)
+            $jsonText = $response.TrimStart([char]0xFEFF)
+            return ($jsonText | ConvertFrom-Json)
         }
 
         return $response
@@ -166,6 +361,7 @@ function Invoke-JsonUrl($url) {
 
         try {
             $curlOutput = & curl.exe --location --silent --show-error --fail --ssl-no-revoke `
+                --max-time $HttpTimeoutSeconds `
                 --header "User-Agent: GitHubPagesManager" `
                 --header "Cache-Control: no-cache" `
                 $url 2>&1
@@ -176,13 +372,215 @@ function Invoke-JsonUrl($url) {
         }
 
         if ($curlCode -eq 0 -and ![string]::IsNullOrWhiteSpace(($curlOutput -join [Environment]::NewLine))) {
-            return (($curlOutput -join [Environment]::NewLine) | ConvertFrom-Json)
+            $jsonText = ($curlOutput -join [Environment]::NewLine).TrimStart([char]0xFEFF)
+            return ($jsonText | ConvertFrom-Json)
         }
 
         throw "URL okunamadi. PowerShell: $lastError Curl: $($curlOutput -join [Environment]::NewLine)"
     }
 
     throw "URL okunamadi. PowerShell: $lastError"
+}
+
+function Get-CacheBustedUrl($url) {
+    if ([string]::IsNullOrWhiteSpace($url)) {
+        return $url
+    }
+
+    try {
+        $uri = [UriBuilder]$url
+
+        if (![string]::IsNullOrWhiteSpace($uri.Query)) {
+            $uri.Query = $uri.Query.TrimStart("?") + "&_=" + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        }
+        else {
+            $uri.Query = "_=" + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        }
+
+        return $uri.Uri.AbsoluteUri
+    }
+    catch {
+        return $url
+    }
+}
+
+function Get-GitHubBranchHeadSha($repoFullName, $branchName) {
+    if ([string]::IsNullOrWhiteSpace($repoFullName) -or [string]::IsNullOrWhiteSpace($branchName)) {
+        return $null
+    }
+
+    $apiUrl = "https://api.github.com/repos/$repoFullName/branches/$branchName"
+    $oldProtocol = [Net.ServicePointManager]::SecurityProtocol
+
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = $oldProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $response = Invoke-RestMethod -Uri $apiUrl -Headers @{
+            "User-Agent" = "GitHubPagesManager"
+            "Cache-Control" = "no-cache"
+        } -TimeoutSec $HttpTimeoutSeconds -UseBasicParsing
+
+        if ($null -ne $response -and $null -ne $response.commit -and ![string]::IsNullOrWhiteSpace($response.commit.sha)) {
+            return $response.commit.sha
+        }
+    }
+    catch {
+    }
+    finally {
+        [Net.ServicePointManager]::SecurityProtocol = $oldProtocol
+    }
+
+    return $null
+}
+
+function Get-PinnedManifestUrl($manifestUrl) {
+    if ([string]::IsNullOrWhiteSpace($manifestUrl)) {
+        return $null
+    }
+
+    if ($manifestUrl -match '^https?://raw\.githubusercontent\.com/([^/]+)/([^/]+)/main/(.+)$') {
+        $repoFullName = "$($matches[1])/$($matches[2])"
+        $manifestPath = $matches[3]
+        $headSha = Get-GitHubBranchHeadSha $repoFullName "main"
+
+        if (![string]::IsNullOrWhiteSpace($headSha)) {
+            return "https://raw.githubusercontent.com/$repoFullName/$headSha/$manifestPath"
+        }
+    }
+
+    return $null
+}
+
+function Get-RawMainManifestInfo($manifestUrl) {
+    if ([string]::IsNullOrWhiteSpace($manifestUrl)) {
+        return $null
+    }
+
+    if ($manifestUrl -match '^https?://raw\.githubusercontent\.com/([^/]+)/([^/]+)/main/(.+)$') {
+        return [PSCustomObject]@{
+            RepoFullName = "$($matches[1])/$($matches[2])"
+            Path = $matches[3]
+        }
+    }
+
+    return $null
+}
+
+function Get-HeadShaFromRawUrl($url) {
+    if ([string]::IsNullOrWhiteSpace($url)) {
+        return $null
+    }
+
+    if ($url -match '^https?://raw\.githubusercontent\.com/[^/]+/[^/]+/([0-9a-fA-F]{40})/') {
+        return $matches[1].ToLowerInvariant()
+    }
+
+    return $null
+}
+
+function Get-UpdateManifest($manifestUrl) {
+    $cache = Get-UpdateCheckCache
+    $rawInfo = Get-RawMainManifestInfo $manifestUrl
+
+    if ($null -ne $rawInfo) {
+        $headSha = Get-GitHubBranchHeadSha $rawInfo.RepoFullName "main"
+
+        if ([string]::IsNullOrWhiteSpace($headSha)) {
+            if ($null -ne $cache -and $null -ne $cache.Manifest) {
+                return [PSCustomObject]@{
+                    Manifest = $cache.Manifest
+                    SourceUrl = $cache.SourceUrl
+                    HeadSha = $cache.HeadSha
+                    FromCache = $true
+                }
+            }
+        }
+        elseif ($null -ne $cache -and $null -ne $cache.Manifest -and [string]$cache.HeadSha -eq [string]$headSha) {
+            return [PSCustomObject]@{
+                Manifest = $cache.Manifest
+                SourceUrl = $cache.SourceUrl
+                HeadSha = $headSha
+                FromCache = $true
+            }
+        }
+        else {
+            $pinnedManifestUrl = "https://raw.githubusercontent.com/$($rawInfo.RepoFullName)/$headSha/$($rawInfo.Path)"
+
+            try {
+                $manifest = Invoke-JsonUrl $pinnedManifestUrl
+
+                if ($null -ne $manifest) {
+                    return [PSCustomObject]@{
+                        Manifest = $manifest
+                        SourceUrl = $pinnedManifestUrl
+                        HeadSha = $headSha
+                        FromCache = $false
+                    }
+                }
+            }
+            catch {
+            }
+        }
+    }
+
+    $pinnedManifestUrl = Get-PinnedManifestUrl $manifestUrl
+
+    if (![string]::IsNullOrWhiteSpace($pinnedManifestUrl)) {
+        try {
+            $manifest = Invoke-JsonUrl $pinnedManifestUrl
+
+            if ($null -ne $manifest) {
+                return [PSCustomObject]@{
+                    Manifest = $manifest
+                    SourceUrl = $pinnedManifestUrl
+                    HeadSha = Get-HeadShaFromRawUrl $pinnedManifestUrl
+                    FromCache = $false
+                }
+            }
+        }
+        catch {
+        }
+    }
+
+    $fallbackManifest = Invoke-JsonUrl $manifestUrl
+
+    return [PSCustomObject]@{
+        Manifest = $fallbackManifest
+        SourceUrl = $manifestUrl
+        HeadSha = Get-HeadShaFromRawUrl $manifestUrl
+        FromCache = $false
+    }
+}
+
+function Get-UpdateCheckCache {
+    if (!(Test-Path -LiteralPath $UpdateCheckCachePath)) {
+        return $null
+    }
+
+    try {
+        return Get-Content -LiteralPath $UpdateCheckCachePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+    catch {
+        return $null
+    }
+}
+
+function Save-UpdateCheckCache($manifestUrl, $manifestSourceUrl, $manifest) {
+    if ($null -eq $manifest) {
+        return
+    }
+
+    Ensure-Storage
+
+    $cache = [PSCustomObject]@{
+        CheckedAt = (Get-Date).ToUniversalTime().ToString("o")
+        ManifestUrl = $manifestUrl
+        SourceUrl = $manifestSourceUrl
+        HeadSha = Get-HeadShaFromRawUrl $manifestSourceUrl
+        Manifest = $manifest
+    }
+
+    $json = $cache | ConvertTo-Json -Depth 30
+    [System.IO.File]::WriteAllText($UpdateCheckCachePath, $json, [System.Text.UTF8Encoding]::new($false))
 }
 
 function Save-UrlToFile($url, $outFile) {
@@ -192,6 +590,7 @@ function Save-UrlToFile($url, $outFile) {
 
     $oldProtocol = [Net.ServicePointManager]::SecurityProtocol
     $lastError = $null
+    $downloadUrl = Get-CacheBustedUrl $url
 
     try {
         [Net.ServicePointManager]::SecurityProtocol = $oldProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -199,7 +598,7 @@ function Save-UrlToFile($url, $outFile) {
             "User-Agent" = "GitHubPagesManager"
             "Cache-Control" = "no-cache"
         }
-        Invoke-WebRequest -Uri $url -OutFile $outFile -Headers $headers -UseBasicParsing
+        Invoke-WebRequest -Uri $downloadUrl -OutFile $outFile -Headers $headers -TimeoutSec $HttpTimeoutSeconds -UseBasicParsing
         return
     }
     catch {
@@ -217,10 +616,11 @@ function Save-UrlToFile($url, $outFile) {
 
         try {
             $curlOutput = & curl.exe --location --silent --show-error --fail --ssl-no-revoke `
+                --max-time $HttpTimeoutSeconds `
                 --header "User-Agent: GitHubPagesManager" `
                 --header "Cache-Control: no-cache" `
                 --output $outFile `
-                $url 2>&1
+                $downloadUrl 2>&1
             $curlCode = $LASTEXITCODE
         }
         finally {
@@ -261,6 +661,60 @@ function Get-ManifestNotes($manifest) {
     }
 
     return $notes
+}
+
+function Get-CategorizedManifestNotes($manifest) {
+    $result = [ordered]@{}
+
+    if ($null -eq $manifest -or $null -eq $manifest.categorizedNotes) {
+        return $result
+    }
+
+    foreach ($category in @("Added", "Fixed", "Changed", "Security", "Internal")) {
+        $items = @()
+        $rawItems = $manifest.categorizedNotes.$category
+
+        foreach ($item in @($rawItems)) {
+            if (![string]::IsNullOrWhiteSpace([string]$item)) {
+                $items += ([string]$item).Trim()
+            }
+        }
+
+        if ($items.Count -gt 0) {
+            $result[$category] = $items
+        }
+    }
+
+    return $result
+}
+
+function Write-ManifestNotes($manifest) {
+    $categorized = Get-CategorizedManifestNotes $manifest
+
+    if ($categorized.Count -gt 0) {
+        foreach ($category in $categorized.Keys) {
+            Write-Host "$category" -ForegroundColor Cyan
+
+            foreach ($note in @($categorized[$category])) {
+                Write-Host "  - $note"
+            }
+
+            Write-Host ""
+        }
+
+        return
+    }
+
+    $notes = @(Get-ManifestNotes $manifest)
+
+    if ($notes.Count -eq 0) {
+        Write-Host "- Not yok."
+    }
+    else {
+        foreach ($note in $notes) {
+            Write-Host "- $note"
+        }
+    }
 }
 
 function Get-EffectiveUpdateManifestUrl {
@@ -367,23 +821,373 @@ function Get-EffectiveErrorReportRepo {
     return $null
 }
 
-function New-ErrorReportBody($message) {
-    $activeGhUser = $null
+function Get-ErrorCategory($message) {
+    $text = ([string]$message).ToLowerInvariant()
+
+    if ($text -match "sha256|hash|dogrulama|download|indir") {
+        return "hash"
+    }
+
+    if ($text -match "auth|login|token|credential|giris|yetki|scope|delete_repo") {
+        return "auth"
+    }
+
+    if ($text -match "repo.*sil|silinemedi|delete") {
+        return "delete"
+    }
+
+    if ($text -match "push|commit|remote|git ") {
+        return "git"
+    }
+
+    if ($text -match "publish|yayin|pages|repo olustur") {
+        return "publish"
+    }
+
+    if ($text -match "update|guncelle|manifest") {
+        return "update"
+    }
+
+    return "unknown"
+}
+
+function Get-ErrorSignature($message, $category) {
+    $normalized = ([string]$message).ToLowerInvariant()
+    $normalized = $normalized -replace 'https?://\S+', '<url>'
+    $normalized = $normalized -replace '[a-f0-9]{32,64}', '<hash>'
+    $normalized = $normalized -replace '\b\d{4}-\d{2}-\d{2}[t\s]\d{2}:\d{2}:\d{2}\b', '<date>'
+    $normalized = $normalized -replace '\d+', '<n>'
+    $normalized = $normalized -replace '\s+', ' '
+    $seed = "$category|$AppVersion|$normalized"
+    $sha = [System.Security.Cryptography.SHA256]::Create()
 
     try {
-        if (Command-Exists "gh") {
-            $activeGhUser = Get-ActiveGitHubUser
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($seed)
+        $hash = $sha.ComputeHash($bytes)
+        return ([BitConverter]::ToString($hash).Replace("-", "").Substring(0, 16)).ToLowerInvariant()
+    }
+    finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-ShortSha256($seed) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes([string]$seed)
+        $hash = $sha.ComputeHash($bytes)
+        return ([BitConverter]::ToString($hash).Replace("-", "").Substring(0, 16)).ToLowerInvariant()
+    }
+    finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-ClientId($activeGhUser) {
+    $seed = "$env:COMPUTERNAME|$env:USERDOMAIN|$env:USERNAME|$activeGhUser|$env:BAT_FILE"
+    return Get-ShortSha256 $seed
+}
+
+function Get-TelemetryKeyFromManifest($manifest) {
+    if ($null -eq $manifest -or $null -eq $manifest.telemetry) {
+        return $null
+    }
+
+    if (![string]::IsNullOrWhiteSpace($manifest.telemetry.keyId) -and ![string]::IsNullOrWhiteSpace($manifest.telemetry.publicKey)) {
+        return [PSCustomObject]@{
+            KeyId = [string]$manifest.telemetry.keyId
+            PublicKey = [string]$manifest.telemetry.publicKey
+        }
+    }
+
+    return $null
+}
+
+function Get-EffectiveTelemetryKeyInfo {
+    if (![string]::IsNullOrWhiteSpace($TelemetryKeyId) -and ![string]::IsNullOrWhiteSpace($TelemetryPublicKey)) {
+        return [PSCustomObject]@{
+            KeyId = $TelemetryKeyId
+            PublicKey = $TelemetryPublicKey
+        }
+    }
+
+    $cache = Get-UpdateCheckCache
+    $cacheKey = $null
+
+    if ($null -ne $cache -and $null -ne $cache.Manifest) {
+        $cacheKey = Get-TelemetryKeyFromManifest $cache.Manifest
+    }
+
+    if ($null -ne $cacheKey) {
+        return $cacheKey
+    }
+
+    $localManifest = Get-LocalAdminManifest
+    $localKey = Get-TelemetryKeyFromManifest $localManifest
+
+    if ($null -ne $localKey) {
+        return $localKey
+    }
+
+    return $null
+}
+
+function Test-TelemetryEncryptionAvailable {
+    return $null -ne (Get-EffectiveTelemetryKeyInfo)
+}
+
+function Protect-TelemetryPayload($payload) {
+    $keyInfo = Get-EffectiveTelemetryKeyInfo
+
+    if ($null -eq $keyInfo) {
+        return $null
+    }
+
+    $publicXml = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($keyInfo.PublicKey))
+    $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider 2048
+    $aes = [System.Security.Cryptography.Aes]::Create()
+
+    try {
+        $rsa.FromXmlString($publicXml)
+        $aes.KeySize = 256
+        $aes.Mode = [System.Security.Cryptography.CipherMode]::CBC
+        $aes.Padding = [System.Security.Cryptography.PaddingMode]::PKCS7
+        $aes.GenerateKey()
+        $aes.GenerateIV()
+
+        $json = $payload | ConvertTo-Json -Depth 30 -Compress
+        $plainBytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+        $encryptor = $aes.CreateEncryptor()
+        $cipherBytes = $encryptor.TransformFinalBlock($plainBytes, 0, $plainBytes.Length)
+        $encryptedKey = $rsa.Encrypt($aes.Key, $false)
+
+        return [PSCustomObject]@{
+            schemaVersion = 1
+            kind = "gpm-encrypted-telemetry"
+            keyId = $keyInfo.KeyId
+            clientId = $payload.clientId
+            payloadKind = $payload.kind
+            algorithm = "RSA-PKCS1+A256-CBC"
+            encryptedKey = [Convert]::ToBase64String($encryptedKey)
+            iv = [Convert]::ToBase64String($aes.IV)
+            ciphertext = [Convert]::ToBase64String($cipherBytes)
+            createdAt = (Get-Date).ToUniversalTime().ToString("s") + "Z"
+        }
+    }
+    finally {
+        if ($null -ne $aes) {
+            $aes.Dispose()
+        }
+
+        if ($null -ne $rsa) {
+            $rsa.Dispose()
+        }
+    }
+}
+
+function New-EncryptedTelemetryBody($payload) {
+    $envelope = Protect-TelemetryPayload $payload
+
+    if ($null -eq $envelope) {
+        return $null
+    }
+
+    $json = $envelope | ConvertTo-Json -Depth 20
+    $lines = @(
+        "## GPM Encrypted Telemetry",
+        "",
+        "- Kind: $($payload.kind)",
+        "- Client ID: gpm-client:$($payload.clientId)",
+        "- Key ID: $($envelope.keyId)",
+        "",
+        '```json',
+        $json,
+        '```'
+    )
+
+    return ($lines -join [Environment]::NewLine)
+}
+
+function Get-RegisteredRepoTelemetry {
+    $repoItems = New-Object System.Collections.ArrayList
+
+    try {
+        $repos = @(Load-Db)
+
+        foreach ($repo in $repos) {
+            if ($null -eq $repo) {
+                continue
+            }
+
+            [void]$repoItems.Add([PSCustomObject]@{
+                fullName = [string]$repo.FullName
+                siteUrl = [string]$repo.SiteUrl
+                repoUrl = [string]$repo.RepoUrl
+                localPath = [string]$repo.LocalPath
+                updatedAt = [string]$repo.UpdatedAt
+            })
         }
     }
     catch {
-        $activeGhUser = $null
     }
 
+    return @($repoItems.ToArray())
+}
+
+function New-TelemetryPayload($kind, $activeGhUser, $clientId) {
     $windowsUser = $env:USERNAME
 
     if (![string]::IsNullOrWhiteSpace($env:USERDOMAIN)) {
         $windowsUser = "$env:USERDOMAIN\$env:USERNAME"
     }
+
+    $nowUtc = (Get-Date).ToUniversalTime().ToString("s") + "Z"
+
+    return [PSCustomObject]@{
+        schemaVersion = 1
+        kind = $kind
+        clientId = $clientId
+        timestamp = (Get-Date).ToString("s")
+        utc = $nowUtc
+        lastSeenUtc = $nowUtc
+        appVersion = $AppVersion
+        computer = $env:COMPUTERNAME
+        windowsUser = $windowsUser
+        githubUser = $activeGhUser
+        workingDirectory = (Get-Location).Path
+        batPath = $env:BAT_FILE
+        repos = @(Get-RegisteredRepoTelemetry)
+    }
+}
+
+function Ensure-IssueLabels($repoFullName, $labels) {
+    foreach ($label in @($labels)) {
+        if ([string]::IsNullOrWhiteSpace($label)) {
+            continue
+        }
+
+        $color = "ededed"
+
+        if ($label -eq "gpm-error") {
+            $color = "d73a4a"
+        }
+        elseif ($label -eq "gpm-telemetry") {
+            $color = "5319e7"
+        }
+        elseif ($label -match "^gpm-v") {
+            $color = "0366d6"
+        }
+        elseif ($label -match "hash|update") {
+            $color = "fbca04"
+        }
+        elseif ($label -match "auth|delete") {
+            $color = "b60205"
+        }
+
+        Invoke-GhSilent @("label", "create", $label, "--repo", $repoFullName, "--color", $color, "--force") | Out-Null
+    }
+}
+
+function Test-CanManageIssueLabels($repoFullName) {
+    if ([string]::IsNullOrWhiteSpace($repoFullName)) {
+        return $false
+    }
+
+    $result = Invoke-GhSilent @("api", "repos/$repoFullName", "--jq", ".permissions.push")
+
+    if ($result.Code -ne 0) {
+        return $false
+    }
+
+    return ([string]$result.Output).Trim().ToLowerInvariant() -eq "true"
+}
+
+function Find-ExistingErrorIssue($repoFullName, $signature) {
+    if ([string]::IsNullOrWhiteSpace($signature)) {
+        return $null
+    }
+
+    $signatureLabel = "gpm-sig-$signature"
+    $result = Invoke-GhSilent @(
+        "issue", "list",
+        "--repo", $repoFullName,
+        "--state", "open",
+        "--label", $signatureLabel,
+        "--json", "number,title,url"
+    )
+
+    if ($result.Code -eq 0 -and ![string]::IsNullOrWhiteSpace($result.Output)) {
+        try {
+            $issues = @($result.Output | ConvertFrom-Json)
+            $issue = $issues | Select-Object -First 1
+
+            if ($null -ne $issue) {
+                return $issue
+            }
+        }
+        catch {
+        }
+    }
+
+    $result = Invoke-GhSilent @(
+        "issue", "list",
+        "--repo", $repoFullName,
+        "--state", "open",
+        "--label", "gpm-error",
+        "--search", "gpm-signature:$signature",
+        "--json", "number,title,url"
+    )
+
+    if ($result.Code -ne 0 -or [string]::IsNullOrWhiteSpace($result.Output)) {
+        return $null
+    }
+
+    try {
+        $issues = @($result.Output | ConvertFrom-Json)
+        return ($issues | Select-Object -First 1)
+    }
+    catch {
+    }
+
+    $result = Invoke-GhSilent @(
+        "issue", "list",
+        "--repo", $repoFullName,
+        "--state", "open",
+        "--limit", "100",
+        "--json", "number,title,url,body"
+    )
+
+    if ($result.Code -ne 0 -or [string]::IsNullOrWhiteSpace($result.Output)) {
+        return $null
+    }
+
+    try {
+        $issues = @($result.Output | ConvertFrom-Json)
+        return ($issues | Where-Object {
+            $null -ne $_.body -and ([string]$_.body).Contains("gpm-signature:$signature")
+        } | Select-Object -First 1)
+    }
+    catch {
+        return $null
+    }
+}
+
+function Sanitize-PublicErrorText($text, $activeGhUser = $null) {
+    $value = [string]$text
+
+    foreach ($secret in @($env:USERPROFILE, $env:USERNAME, $env:COMPUTERNAME, $activeGhUser)) {
+        if ([string]::IsNullOrWhiteSpace($secret)) {
+            continue
+        }
+
+        $value = $value -replace [regex]::Escape($secret), "<redacted>"
+    }
+
+    return $value
+}
+
+function New-ErrorReportBody($message, $clientId, $safeMessage) {
 
     $lines = @(
         "## Hata Raporu",
@@ -391,16 +1195,17 @@ function New-ErrorReportBody($message) {
         "- Tarih: $((Get-Date).ToString("s"))",
         "- UTC: $((Get-Date).ToUniversalTime().ToString("s"))Z",
         "- Uygulama surumu: $AppVersion",
-        "- Windows kullanicisi: $windowsUser",
-        "- GitHub kullanicisi: $activeGhUser",
-        "- Bilgisayar: $env:COMPUTERNAME",
-        "- Calisan klasor: $((Get-Location).Path)",
-        "- BAT yolu: $env:BAT_FILE",
+        "- Client ID: gpm-client:$clientId",
+        "",
+        "## Siniflandirma",
+        "",
+        "- Kategori: $script:CurrentErrorCategory",
+        "- Imza: gpm-signature:$script:CurrentErrorSignature",
         "",
         "## Hata",
         "",
         '```text',
-        ([string]$message),
+        ([string]$safeMessage),
         '```'
     )
 
@@ -429,7 +1234,26 @@ function Submit-ErrorReport($message) {
             return
         }
 
-        $safeTitleText = ([string]$message -replace "`r", " " -replace "`n", " ").Trim()
+        $activeGhUser = $script:GhUser
+
+        if ([string]::IsNullOrWhiteSpace($activeGhUser)) {
+            $activeGhUser = Get-ActiveGitHubUser
+        }
+
+        $clientId = Get-ClientId $activeGhUser
+        $safeMessage = Sanitize-PublicErrorText $message $activeGhUser
+        $category = Get-ErrorCategory $message
+        $signature = Get-ErrorSignature $safeMessage $category
+        $script:CurrentErrorCategory = $category
+        $script:CurrentErrorSignature = $signature
+        $labels = @("gpm-error", "gpm-$category", "gpm-v$AppVersion", "gpm-sig-$signature", "gpm-client-$clientId")
+        $canManageLabels = Test-CanManageIssueLabels $repoFullName
+
+        if ($canManageLabels) {
+            Ensure-IssueLabels $repoFullName $labels
+        }
+
+        $safeTitleText = ([string]$safeMessage -replace "`r", " " -replace "`n", " ").Trim()
 
         if ($safeTitleText.Length -gt 70) {
             $safeTitleText = $safeTitleText.Substring(0, 70)
@@ -439,36 +1263,55 @@ function Submit-ErrorReport($message) {
             $safeTitleText = "Bilinmeyen hata"
         }
 
-        $title = "[Auto Error] $((Get-Date).ToString("yyyy-MM-dd HH:mm")) - $env:USERNAME - $safeTitleText"
+        $title = "[Auto Error][$category] $((Get-Date).ToString("yyyy-MM-dd HH:mm")) - $env:USERNAME - $safeTitleText"
         $reportsDir = Join-Path $StoreDir "error-reports"
         New-Item -ItemType Directory -Path $reportsDir -Force | Out-Null
 
         $bodyPath = Join-Path $reportsDir ("error-report-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".md")
-        [System.IO.File]::WriteAllText($bodyPath, (New-ErrorReportBody $message), [System.Text.UTF8Encoding]::new($false))
+        [System.IO.File]::WriteAllText($bodyPath, (New-ErrorReportBody $message $clientId $safeMessage), [System.Text.UTF8Encoding]::new($false))
 
         Write-Host ""
-        Write-Host "[INFO] Hata raporu GitHub'a gonderiliyor..."
+        Write-StatusInfo "Hata raporu GitHub'a gonderiliyor..."
 
-        $result = Invoke-GhSilent @(
-            "issue", "create",
-            "--repo", $repoFullName,
-            "--title", $title,
-            "--body-file", $bodyPath
-        )
+        $existingIssue = Find-ExistingErrorIssue $repoFullName $signature
 
-        if ($result.Code -eq 0) {
-            Write-Host "[OK] Hata raporu gonderildi."
+        if ($null -ne $existingIssue) {
+            $result = Invoke-GhSilent @(
+                "issue", "comment", [string]$existingIssue.number,
+                "--repo", $repoFullName,
+                "--body-file", $bodyPath
+            )
+        }
+        elseif (!$canManageLabels) {
+            $result = Invoke-GhSilent @(
+                "issue", "create",
+                "--repo", $repoFullName,
+                "--title", $title,
+                "--body-file", $bodyPath
+            )
         }
         else {
-            Write-Host "[UYARI] Hata raporu GitHub'a gonderilemedi."
+            $result = Invoke-GhSilent @(
+                "issue", "create",
+                "--repo", $repoFullName,
+                "--title", $title,
+                "--body-file", $bodyPath,
+                "--label", ($labels -join ",")
+            )
+        }
+
+        if ($result.Code -eq 0) {
+            Write-StatusOk "Hata raporu gonderildi."
+        }
+        else {
+            Write-StatusWarn "Hata raporu GitHub'a gonderilemedi."
             Write-Host $result.Output
-            Write-Host "Yerel rapor dosyasi:"
-            Write-Host $bodyPath
+            Write-ThemeValue "yerel rapor" $bodyPath
         }
     }
     catch {
         try {
-            Write-Host "[UYARI] Hata raporu hazirlanamadi."
+            Write-StatusWarn "Hata raporu hazirlanamadi."
             Write-Host $_.Exception.Message
         }
         catch {
@@ -476,6 +1319,869 @@ function Submit-ErrorReport($message) {
     }
     finally {
         $script:IsSendingErrorReport = $false
+    }
+}
+
+function Get-ClientStatusSignature($activeGhUser) {
+    return Get-ClientId $activeGhUser
+}
+
+function Get-ClientStatusCache {
+    if (!(Test-Path -LiteralPath $ClientStatusCachePath)) {
+        return $null
+    }
+
+    try {
+        return Get-Content -LiteralPath $ClientStatusCachePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+    catch {
+        return $null
+    }
+}
+
+function Save-ClientStatusCache($signature, $activeGhUser) {
+    Ensure-Storage
+
+    $cache = [PSCustomObject]@{
+        SchemaVersion = $ClientStatusSchemaVersion
+        SentAt = (Get-Date).ToUniversalTime().ToString("o")
+        Signature = $signature
+        Version = $AppVersion
+        GitHubUser = $activeGhUser
+        Computer = $env:COMPUTERNAME
+        WindowsUser = "$env:USERDOMAIN\$env:USERNAME"
+    }
+
+    $json = $cache | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText($ClientStatusCachePath, $json, [System.Text.UTF8Encoding]::new($false))
+}
+
+function Save-ClientStatusDiagnostic($status, $detail = "") {
+    try {
+        Ensure-Storage
+
+        $diagnostic = [PSCustomObject]@{
+            SchemaVersion = 1
+            CheckedAt = (Get-Date).ToUniversalTime().ToString("o")
+            Status = [string]$status
+            Detail = [string]$detail
+            Version = $AppVersion
+            HasEmbeddedTelemetryKey = (![string]::IsNullOrWhiteSpace($TelemetryKeyId) -and ![string]::IsNullOrWhiteSpace($TelemetryPublicKey))
+            HasCachedTelemetryKey = ($null -ne (Get-TelemetryKeyFromManifest ((Get-UpdateCheckCache).Manifest)))
+            HasLocalManifestTelemetryKey = ($null -ne (Get-TelemetryKeyFromManifest (Get-LocalAdminManifest)))
+        }
+
+        $json = $diagnostic | ConvertTo-Json -Depth 10
+        [System.IO.File]::WriteAllText($ClientStatusDiagPath, $json, [System.Text.UTF8Encoding]::new($false))
+    }
+    catch {
+    }
+}
+
+function Test-ClientStatusCacheFresh($signature, $activeGhUser) {
+    $cache = Get-ClientStatusCache
+
+    if ($null -eq $cache) {
+        return $false
+    }
+
+    if ([int]($cache.SchemaVersion) -ne [int]$ClientStatusSchemaVersion) {
+        return $false
+    }
+
+    if ([string]$cache.Signature -ne [string]$signature) {
+        return $false
+    }
+
+    if ([string]$cache.Version -ne [string]$AppVersion) {
+        return $false
+    }
+
+    if ([string]$cache.GitHubUser -ne [string]$activeGhUser) {
+        return $false
+    }
+
+    try {
+        $sentAt = [DateTimeOffset]::Parse([string]$cache.SentAt)
+        return (([DateTimeOffset]::UtcNow - $sentAt).TotalMinutes -lt 60)
+    }
+    catch {
+        return $false
+    }
+}
+
+function Queue-ClientStatusEvent {
+    try {
+        Ensure-Storage
+
+        if (!(Test-Path -LiteralPath $TelemetryQueueDir)) {
+            New-Item -ItemType Directory -Path $TelemetryQueueDir -Force | Out-Null
+        }
+
+        $event = [PSCustomObject]@{
+            SchemaVersion = 1
+            QueuedAt = (Get-Date).ToUniversalTime().ToString("o")
+            AppVersion = $AppVersion
+            Computer = $env:COMPUTERNAME
+            WindowsUser = "$env:USERDOMAIN\$env:USERNAME"
+            WorkingDirectory = (Get-Location).Path
+            BatPath = $env:BAT_FILE
+        }
+
+        $path = Join-Path $TelemetryQueueDir ("usage-" + (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + ([Guid]::NewGuid().ToString("N")) + ".json")
+        $json = $event | ConvertTo-Json -Depth 10
+        [System.IO.File]::WriteAllText($path, $json, [System.Text.UTF8Encoding]::new($false))
+        return $path
+    }
+    catch {
+        return $null
+    }
+}
+
+function Clear-ClientStatusQueue {
+    try {
+        if (!(Test-Path -LiteralPath $TelemetryQueueDir)) {
+            return
+        }
+
+        Get-ChildItem -LiteralPath $TelemetryQueueDir -Filter "*.json" -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+    catch {
+    }
+}
+
+function Start-ClientStatusWorker {
+    try {
+        Queue-ClientStatusEvent | Out-Null
+
+        $keyInfo = Get-EffectiveTelemetryKeyInfo
+
+        if ($null -eq $keyInfo) {
+            Save-ClientStatusDiagnostic "no-key" "Telemetry public key bulunamadi."
+            return
+        }
+
+        $repoFullName = Get-EffectiveErrorReportRepo
+
+        if ([string]::IsNullOrWhiteSpace($repoFullName)) {
+            Save-ClientStatusDiagnostic "no-repo" "Telemetry issue reposu ayarlanmamis."
+            return
+        }
+
+        Ensure-Storage
+
+        if (Test-Path -LiteralPath $TelemetryWorkerLockPath) {
+            $lockAgeSeconds = ((Get-Date) - (Get-Item -LiteralPath $TelemetryWorkerLockPath).LastWriteTime).TotalSeconds
+
+            if ($lockAgeSeconds -lt 120) {
+                Save-ClientStatusDiagnostic "worker-running" "Telemetry worker zaten calisiyor."
+                return
+            }
+
+            Remove-Item -LiteralPath $TelemetryWorkerLockPath -Force -ErrorAction SilentlyContinue
+            Save-ClientStatusDiagnostic "worker-timeout" "Eski telemetry worker kilidi zaman asimina ugradi; yeni worker baslatiliyor."
+        }
+
+        $workerConfig = [PSCustomObject]@{
+            SchemaVersion = 1
+            StoreDir = $StoreDir
+            QueueDir = $TelemetryQueueDir
+            LockPath = $TelemetryWorkerLockPath
+            DiagPath = $ClientStatusDiagPath
+            CachePath = $ClientStatusCachePath
+            DbPath = $DbPath
+            WorkDir = (Join-Path $StoreDir "client-status")
+            RepoFullName = $repoFullName
+            AppVersion = $AppVersion
+            BatPath = [string]$env:BAT_FILE
+            KeyId = [string]$keyInfo.KeyId
+            PublicKey = [string]$keyInfo.PublicKey
+            ClientStatusSchemaVersion = $ClientStatusSchemaVersion
+        }
+
+        $configJson = $workerConfig | ConvertTo-Json -Depth 10 -Compress
+        $configB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($configJson))
+
+        $lock = [PSCustomObject]@{
+            StartedAt = (Get-Date).ToUniversalTime().ToString("o")
+            AppVersion = $AppVersion
+        }
+        [System.IO.File]::WriteAllText($TelemetryWorkerLockPath, ($lock | ConvertTo-Json -Depth 5), [System.Text.UTF8Encoding]::new($false))
+
+        $workerScript = @'
+$ErrorActionPreference = "Stop"
+$env:GH_PROMPT_DISABLED = "1"
+$script:Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+$configJson = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("__CONFIG_B64__"))
+$config = $configJson | ConvertFrom-Json
+
+function Save-Diagnostic($status, $detail = "") {
+    try {
+        $diagnostic = [PSCustomObject]@{
+            SchemaVersion = 1
+            CheckedAt = (Get-Date).ToUniversalTime().ToString("o")
+            Status = [string]$status
+            Detail = [string]$detail
+            Version = [string]$config.AppVersion
+            HasEmbeddedTelemetryKey = (![string]::IsNullOrWhiteSpace([string]$config.KeyId) -and ![string]::IsNullOrWhiteSpace([string]$config.PublicKey))
+            HasCachedTelemetryKey = $false
+            HasLocalManifestTelemetryKey = $false
+        }
+
+        $json = $diagnostic | ConvertTo-Json -Depth 10
+        [System.IO.File]::WriteAllText([string]$config.DiagPath, $json, $script:Utf8NoBom)
+    }
+    catch {
+    }
+}
+
+function Command-Exists($name) {
+    return $null -ne (Get-Command $name -ErrorAction SilentlyContinue)
+}
+
+function Invoke-GhSilent($argsList) {
+    $oldPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $output = @()
+    $code = 1
+
+    try {
+        $output = & gh @argsList 2>&1
+        $code = $LASTEXITCODE
+    }
+    catch {
+        $output = @($_.Exception.Message)
+        $code = 1
+    }
+    finally {
+        $ErrorActionPreference = $oldPreference
+    }
+
+    return [PSCustomObject]@{
+        Code = $code
+        Output = ($output -join [Environment]::NewLine)
+    }
+}
+
+function Get-ActiveGitHubUser {
+    $result = Invoke-GhSilent @("api", "user", "--jq", ".login")
+
+    if ($result.Code -ne 0 -or [string]::IsNullOrWhiteSpace($result.Output)) {
+        return $null
+    }
+
+    return $result.Output.Trim()
+}
+
+function Get-ShortSha256($seed) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes([string]$seed)
+        $hash = $sha.ComputeHash($bytes)
+        return ([BitConverter]::ToString($hash).Replace("-", "").Substring(0, 16)).ToLowerInvariant()
+    }
+    finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-ClientId($activeGhUser) {
+    $seed = "$env:COMPUTERNAME|$env:USERDOMAIN|$env:USERNAME|$activeGhUser|$($config.BatPath)"
+    return Get-ShortSha256 $seed
+}
+
+function Get-RegisteredRepos {
+    $repoItems = New-Object System.Collections.ArrayList
+
+    try {
+        if (!(Test-Path -LiteralPath ([string]$config.DbPath))) {
+            return @()
+        }
+
+        $raw = [System.IO.File]::ReadAllText([string]$config.DbPath, [System.Text.Encoding]::UTF8)
+
+        if ([string]::IsNullOrWhiteSpace($raw)) {
+            return @()
+        }
+
+        $repos = @($raw | ConvertFrom-Json)
+
+        foreach ($repo in $repos) {
+            if ($null -eq $repo) {
+                continue
+            }
+
+            [void]$repoItems.Add([PSCustomObject]@{
+                fullName = [string]$repo.FullName
+                siteUrl = [string]$repo.SiteUrl
+                repoUrl = [string]$repo.RepoUrl
+                localPath = [string]$repo.LocalPath
+                updatedAt = [string]$repo.UpdatedAt
+            })
+        }
+    }
+    catch {
+    }
+
+    return @($repoItems.ToArray())
+}
+
+function Get-QueuedEvents {
+    $items = New-Object System.Collections.ArrayList
+
+    try {
+        if (!(Test-Path -LiteralPath ([string]$config.QueueDir))) {
+            return @()
+        }
+
+        foreach ($file in @(Get-ChildItem -LiteralPath ([string]$config.QueueDir) -Filter "*.json" -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime)) {
+            try {
+                $raw = [System.IO.File]::ReadAllText($file.FullName, [System.Text.Encoding]::UTF8)
+                $event = $raw | ConvertFrom-Json
+                $event | Add-Member -NotePropertyName QueueFile -NotePropertyValue $file.FullName -Force
+                [void]$items.Add($event)
+            }
+            catch {
+            }
+        }
+    }
+    catch {
+    }
+
+    return @($items.ToArray())
+}
+
+function New-TelemetryPayload($kind, $activeGhUser, $clientId, $event, $repos) {
+    $windowsUser = [string]$event.WindowsUser
+
+    if ([string]::IsNullOrWhiteSpace($windowsUser)) {
+        $windowsUser = $env:USERNAME
+
+        if (![string]::IsNullOrWhiteSpace($env:USERDOMAIN)) {
+            $windowsUser = "$env:USERDOMAIN\$env:USERNAME"
+        }
+    }
+
+    $timestamp = [string]$event.QueuedAt
+
+    if ([string]::IsNullOrWhiteSpace($timestamp)) {
+        $timestamp = (Get-Date).ToString("s")
+    }
+
+    $workingDirectory = [string]$event.WorkingDirectory
+
+    if ([string]::IsNullOrWhiteSpace($workingDirectory)) {
+        $workingDirectory = (Get-Location).Path
+    }
+
+    $batPath = [string]$event.BatPath
+
+    if ([string]::IsNullOrWhiteSpace($batPath)) {
+        $batPath = [string]$config.BatPath
+    }
+
+    $nowUtc = (Get-Date).ToUniversalTime().ToString("s") + "Z"
+
+    return [PSCustomObject]@{
+        schemaVersion = 1
+        kind = $kind
+        clientId = $clientId
+        timestamp = $timestamp
+        utc = $nowUtc
+        lastSeenUtc = $nowUtc
+        appVersion = [string]$config.AppVersion
+        computer = $env:COMPUTERNAME
+        windowsUser = $windowsUser
+        githubUser = $activeGhUser
+        workingDirectory = $workingDirectory
+        batPath = $batPath
+        repos = @($repos)
+    }
+}
+
+function Protect-TelemetryPayload($payload) {
+    if ([string]::IsNullOrWhiteSpace([string]$config.KeyId) -or [string]::IsNullOrWhiteSpace([string]$config.PublicKey)) {
+        return $null
+    }
+
+    $publicXml = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([string]$config.PublicKey))
+    $rsa = New-Object System.Security.Cryptography.RSACryptoServiceProvider 2048
+    $aes = [System.Security.Cryptography.Aes]::Create()
+
+    try {
+        $rsa.FromXmlString($publicXml)
+        $aes.KeySize = 256
+        $aes.Mode = [System.Security.Cryptography.CipherMode]::CBC
+        $aes.Padding = [System.Security.Cryptography.PaddingMode]::PKCS7
+        $aes.GenerateKey()
+        $aes.GenerateIV()
+
+        $json = $payload | ConvertTo-Json -Depth 30 -Compress
+        $plainBytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+        $encryptor = $aes.CreateEncryptor()
+        $cipherBytes = $encryptor.TransformFinalBlock($plainBytes, 0, $plainBytes.Length)
+        $encryptedKey = $rsa.Encrypt($aes.Key, $false)
+
+        return [PSCustomObject]@{
+            schemaVersion = 1
+            kind = "gpm-encrypted-telemetry"
+            keyId = [string]$config.KeyId
+            clientId = $payload.clientId
+            payloadKind = $payload.kind
+            algorithm = "RSA-PKCS1+A256-CBC"
+            encryptedKey = [Convert]::ToBase64String($encryptedKey)
+            iv = [Convert]::ToBase64String($aes.IV)
+            ciphertext = [Convert]::ToBase64String($cipherBytes)
+            createdAt = (Get-Date).ToUniversalTime().ToString("s") + "Z"
+        }
+    }
+    finally {
+        if ($null -ne $aes) {
+            $aes.Dispose()
+        }
+
+        if ($null -ne $rsa) {
+            $rsa.Dispose()
+        }
+    }
+}
+
+function New-EncryptedTelemetryBody($payload) {
+    $envelope = Protect-TelemetryPayload $payload
+
+    if ($null -eq $envelope) {
+        return $null
+    }
+
+    $json = $envelope | ConvertTo-Json -Depth 20
+    $lines = @(
+        "## GPM Encrypted Telemetry",
+        "",
+        "- Kind: $($payload.kind)",
+        "- Client ID: gpm-client:$($payload.clientId)",
+        "- Key ID: $($envelope.keyId)",
+        "",
+        '```json',
+        $json,
+        '```'
+    )
+
+    return ($lines -join [Environment]::NewLine)
+}
+
+function Find-ExistingClientIssue($clientId) {
+    $result = Invoke-GhSilent @(
+        "issue", "list",
+        "--repo", ([string]$config.RepoFullName),
+        "--state", "open",
+        "--limit", "100",
+        "--json", "number,title,url,body"
+    )
+
+    if ($result.Code -ne 0 -or [string]::IsNullOrWhiteSpace($result.Output)) {
+        return $null
+    }
+
+    try {
+        $issues = @($result.Output | ConvertFrom-Json)
+        return ($issues | Where-Object {
+            ($null -ne $_.title -and [string]$_.title -eq "[GPM Telemetry] $clientId") -or
+            ($null -ne $_.body -and ([string]$_.body).Contains("gpm-client:$clientId"))
+        } | Select-Object -First 1)
+    }
+    catch {
+        return $null
+    }
+}
+
+function Write-WorkerTextFile($path, $content) {
+    $parent = Split-Path -Parent $path
+
+    if (!(Test-Path -LiteralPath $parent)) {
+        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    }
+
+    [System.IO.File]::WriteAllText($path, [string]$content, $script:Utf8NoBom)
+}
+
+try {
+    if (!(Command-Exists "gh")) {
+        Save-Diagnostic "no-gh" "GitHub CLI bulunamadi."
+        return
+    }
+
+    if ([string]::IsNullOrWhiteSpace([string]$config.KeyId) -or [string]::IsNullOrWhiteSpace([string]$config.PublicKey)) {
+        Save-Diagnostic "no-key" "Telemetry public key bulunamadi."
+        return
+    }
+
+    if ([string]::IsNullOrWhiteSpace([string]$config.RepoFullName)) {
+        Save-Diagnostic "no-repo" "Telemetry issue reposu ayarlanmamis."
+        return
+    }
+
+    $activeGhUser = Get-ActiveGitHubUser
+
+    if ([string]::IsNullOrWhiteSpace($activeGhUser)) {
+        Save-Diagnostic "no-auth" "Aktif GitHub kullanicisi alinamadi."
+        return
+    }
+
+    if (!(Test-Path -LiteralPath ([string]$config.WorkDir))) {
+        New-Item -ItemType Directory -Path ([string]$config.WorkDir) -Force | Out-Null
+    }
+
+    $events = @(Get-QueuedEvents)
+
+    if ($events.Count -eq 0) {
+        $events = @([PSCustomObject]@{
+            QueuedAt = (Get-Date).ToUniversalTime().ToString("o")
+            AppVersion = [string]$config.AppVersion
+            Computer = $env:COMPUTERNAME
+            WindowsUser = "$env:USERDOMAIN\$env:USERNAME"
+            WorkingDirectory = (Get-Location).Path
+            BatPath = [string]$config.BatPath
+        })
+    }
+
+    $clientId = Get-ClientId $activeGhUser
+    $repos = @(Get-RegisteredRepos)
+    $latestEvent = @($events | Sort-Object QueuedAt -Descending | Select-Object -First 1)[0]
+    $statusPayload = New-TelemetryPayload "status" $activeGhUser $clientId $latestEvent $repos
+    $statusBody = New-EncryptedTelemetryBody $statusPayload
+
+    if ([string]::IsNullOrWhiteSpace($statusBody)) {
+        Save-Diagnostic "no-key" "Encrypted telemetry body olusturulamadi."
+        return
+    }
+
+    $statusPath = Join-Path ([string]$config.WorkDir) ("client-status-" + $clientId + ".md")
+    Write-WorkerTextFile $statusPath $statusBody
+
+    $title = "[GPM Telemetry] $clientId"
+    $existingIssue = Find-ExistingClientIssue $clientId
+    $issueNumber = $null
+    $result = $null
+
+    if ($null -ne $existingIssue) {
+        $issueNumber = [string]$existingIssue.number
+        $result = Invoke-GhSilent @(
+            "issue", "edit", $issueNumber,
+            "--repo", ([string]$config.RepoFullName),
+            "--title", $title,
+            "--body-file", $statusPath
+        )
+    }
+    else {
+        $result = Invoke-GhSilent @(
+            "issue", "create",
+            "--repo", ([string]$config.RepoFullName),
+            "--title", $title,
+            "--body-file", $statusPath
+        )
+
+        if ($result.Code -eq 0 -and $result.Output -match '/issues/(\d+)') {
+            $issueNumber = $matches[1]
+        }
+
+        if ([string]::IsNullOrWhiteSpace($issueNumber)) {
+            $existingIssue = Find-ExistingClientIssue $clientId
+
+            if ($null -ne $existingIssue) {
+                $issueNumber = [string]$existingIssue.number
+                $result = Invoke-GhSilent @(
+                    "issue", "edit", $issueNumber,
+                    "--repo", ([string]$config.RepoFullName),
+                    "--title", $title,
+                    "--body-file", $statusPath
+                )
+            }
+        }
+    }
+
+    if ($result.Code -ne 0 -or [string]::IsNullOrWhiteSpace($issueNumber)) {
+        Save-Diagnostic "issue-failed" $result.Output
+        return
+    }
+
+    $sentCount = 0
+
+    foreach ($event in $events) {
+        $usagePayload = New-TelemetryPayload "usage" $activeGhUser $clientId $event $repos
+        $usageBody = New-EncryptedTelemetryBody $usagePayload
+
+        if ([string]::IsNullOrWhiteSpace($usageBody)) {
+            Save-Diagnostic "no-key" "Encrypted usage body olusturulamadi."
+            return
+        }
+
+        $usagePath = Join-Path ([string]$config.WorkDir) ("usage-" + $clientId + "-" + (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + $sentCount + ".md")
+        Write-WorkerTextFile $usagePath $usageBody
+        $commentResult = Invoke-GhSilent @(
+            "issue", "comment", $issueNumber,
+            "--repo", ([string]$config.RepoFullName),
+            "--body-file", $usagePath
+        )
+
+        if ($commentResult.Code -ne 0) {
+            Save-Diagnostic "issue-failed" $commentResult.Output
+            return
+        }
+
+        $sentCount++
+    }
+
+    $cache = [PSCustomObject]@{
+        SchemaVersion = [int]$config.ClientStatusSchemaVersion
+        SentAt = (Get-Date).ToUniversalTime().ToString("o")
+        Signature = $clientId
+        Version = [string]$config.AppVersion
+        GitHubUser = $activeGhUser
+        Computer = $env:COMPUTERNAME
+        WindowsUser = "$env:USERDOMAIN\$env:USERNAME"
+    }
+    [System.IO.File]::WriteAllText([string]$config.CachePath, ($cache | ConvertTo-Json -Depth 10), $script:Utf8NoBom)
+
+    foreach ($event in $events) {
+        if (![string]::IsNullOrWhiteSpace([string]$event.QueueFile) -and (Test-Path -LiteralPath ([string]$event.QueueFile))) {
+            Remove-Item -LiteralPath ([string]$event.QueueFile) -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    Save-Diagnostic "ok" "Telemetry issue guncellendi. $sentCount kullanim kaydi gonderildi."
+}
+catch {
+    Save-Diagnostic "worker-crashed" $_.Exception.Message
+}
+finally {
+    try {
+        if (Test-Path -LiteralPath ([string]$config.LockPath)) {
+            Remove-Item -LiteralPath ([string]$config.LockPath) -Force -ErrorAction SilentlyContinue
+        }
+    }
+    catch {
+    }
+}
+'@.Replace("__CONFIG_B64__", $configB64)
+
+        [System.IO.File]::WriteAllText($TelemetryWorkerPath, $workerScript, [System.Text.UTF8Encoding]::new($true))
+        Save-ClientStatusDiagnostic "queued" "Telemetry arka planda gonderilecek."
+        Start-Process -FilePath "powershell" -WindowStyle Hidden -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $TelemetryWorkerPath) | Out-Null
+    }
+    catch {
+        Remove-Item -LiteralPath $TelemetryWorkerLockPath -Force -ErrorAction SilentlyContinue
+        Save-ClientStatusDiagnostic "worker-failed" $_.Exception.Message
+    }
+}
+
+function Find-ExistingClientStatusIssue($repoFullName, $signature) {
+    if ([string]::IsNullOrWhiteSpace($signature)) {
+        return $null
+    }
+
+    $result = Invoke-GhSilent @(
+        "issue", "list",
+        "--repo", $repoFullName,
+        "--state", "open",
+        "--search", "gpm-client:$signature",
+        "--json", "number,title,url,body"
+    )
+
+    if ($result.Code -eq 0 -and ![string]::IsNullOrWhiteSpace($result.Output)) {
+        try {
+            $issues = @($result.Output | ConvertFrom-Json)
+            $issue = $issues | Select-Object -First 1
+
+            if ($null -ne $issue) {
+                return $issue
+            }
+        }
+        catch {
+        }
+    }
+
+    $result = Invoke-GhSilent @(
+        "issue", "list",
+        "--repo", $repoFullName,
+        "--state", "open",
+        "--limit", "100",
+        "--json", "number,title,url,body"
+    )
+
+    if ($result.Code -ne 0 -or [string]::IsNullOrWhiteSpace($result.Output)) {
+        return $null
+    }
+
+    try {
+        $issues = @($result.Output | ConvertFrom-Json)
+        return ($issues | Where-Object {
+            ($null -ne $_.body -and ([string]$_.body).Contains("gpm-client:$signature")) -or
+            ($null -ne $_.title -and ([string]$_.title).Contains("gpm-client:$signature"))
+        } | Select-Object -First 1)
+    }
+    catch {
+        return $null
+    }
+}
+
+function Submit-ClientStatus {
+    if ($script:IsSendingClientStatus) {
+        return
+    }
+
+    $script:IsSendingClientStatus = $true
+
+    try {
+        if (!(Command-Exists "gh")) {
+            Save-ClientStatusDiagnostic "no-gh" "GitHub CLI bulunamadi."
+            return
+        }
+
+        $repoFullName = Get-EffectiveErrorReportRepo
+
+        if ([string]::IsNullOrWhiteSpace($repoFullName)) {
+            Save-ClientStatusDiagnostic "no-repo" "Telemetry issue reposu ayarlanmamis."
+            return
+        }
+
+        $activeGhUser = $script:GhUser
+
+        if ([string]::IsNullOrWhiteSpace($activeGhUser)) {
+            $activeGhUser = Get-ActiveGitHubUser
+        }
+
+        if ([string]::IsNullOrWhiteSpace($activeGhUser)) {
+            Save-ClientStatusDiagnostic "no-auth" "Aktif GitHub kullanicisi alinamadi."
+            return
+        }
+
+        if (!(Test-TelemetryEncryptionAvailable)) {
+            Save-ClientStatusDiagnostic "no-key" "Telemetry public key bulunamadi."
+            return
+        }
+
+        $signature = Get-ClientStatusSignature $activeGhUser
+        $statusPayload = New-TelemetryPayload "status" $activeGhUser $signature
+        $usagePayload = New-TelemetryPayload "usage" $activeGhUser $signature
+        $statusBody = New-EncryptedTelemetryBody $statusPayload
+        $usageBody = New-EncryptedTelemetryBody $usagePayload
+
+        if ([string]::IsNullOrWhiteSpace($statusBody) -or [string]::IsNullOrWhiteSpace($usageBody)) {
+            Save-ClientStatusDiagnostic "no-key" "Encrypted telemetry body olusturulamadi."
+            return
+        }
+
+        $canManageLabels = Test-CanManageIssueLabels $repoFullName
+        $labels = @("gpm-telemetry", "gpm-v$AppVersion", "gpm-client-$signature")
+
+        if ($canManageLabels) {
+            Ensure-IssueLabels $repoFullName $labels
+        }
+
+        $reportsDir = Join-Path $StoreDir "client-status"
+        New-Item -ItemType Directory -Path $reportsDir -Force | Out-Null
+
+        $bodyPath = Join-Path $reportsDir ("client-status-" + $signature + ".md")
+        [System.IO.File]::WriteAllText($bodyPath, $statusBody, [System.Text.UTF8Encoding]::new($false))
+
+        $existingIssue = Find-ExistingClientStatusIssue $repoFullName $signature
+        $title = "[GPM Telemetry] $signature"
+        $usageCommentSent = $false
+
+        if ($null -ne $existingIssue) {
+            $result = Invoke-GhSilent @(
+                "issue", "edit", [string]$existingIssue.number,
+                "--repo", $repoFullName,
+                "--title", $title,
+                "--body-file", $bodyPath
+            )
+
+            if ($result.Code -eq 0) {
+                Save-ClientStatusCache $signature $activeGhUser
+            }
+
+            $usagePath = Join-Path $reportsDir ("usage-" + $signature + "-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".md")
+            [System.IO.File]::WriteAllText($usagePath, $usageBody, [System.Text.UTF8Encoding]::new($false))
+
+            $commentResult = Invoke-GhSilent @(
+                "issue", "comment", [string]$existingIssue.number,
+                "--repo", $repoFullName,
+                "--body-file", $usagePath
+            )
+
+            if ($commentResult.Code -eq 0) {
+                $usageCommentSent = $true
+            }
+
+            if ($result.Code -ne 0 -and $commentResult.Code -ne 0) {
+                $result = $commentResult
+            }
+        }
+        elseif ($canManageLabels) {
+            $result = Invoke-GhSilent @(
+                "issue", "create",
+                "--repo", $repoFullName,
+                "--title", $title,
+                "--body-file", $bodyPath,
+                "--label", ($labels -join ",")
+            )
+
+            if ($result.Code -eq 0) {
+                $existingIssue = Find-ExistingClientStatusIssue $repoFullName $signature
+
+                if ($null -eq $existingIssue -and $result.Output -match '/issues/(\d+)') {
+                    $existingIssue = [PSCustomObject]@{
+                        number = $matches[1]
+                    }
+                }
+            }
+        }
+        else {
+            $result = Invoke-GhSilent @(
+                "issue", "create",
+                "--repo", $repoFullName,
+                "--title", $title,
+                "--body-file", $bodyPath
+            )
+
+            if ($result.Code -eq 0) {
+                $existingIssue = Find-ExistingClientStatusIssue $repoFullName $signature
+
+                if ($null -eq $existingIssue -and $result.Output -match '/issues/(\d+)') {
+                    $existingIssue = [PSCustomObject]@{
+                        number = $matches[1]
+                    }
+                }
+            }
+        }
+
+        if ($result.Code -eq 0) {
+            Save-ClientStatusCache $signature $activeGhUser
+            Save-ClientStatusDiagnostic "ok" "Telemetry issue guncellendi."
+            Clear-ClientStatusQueue
+
+            if ($null -ne $existingIssue) {
+                if (!$usageCommentSent) {
+                    $usagePath = Join-Path $reportsDir ("usage-" + $signature + "-" + (Get-Date -Format "yyyyMMdd-HHmmss") + ".md")
+                    [System.IO.File]::WriteAllText($usagePath, $usageBody, [System.Text.UTF8Encoding]::new($false))
+                    Invoke-GhSilent @(
+                        "issue", "comment", [string]$existingIssue.number,
+                        "--repo", $repoFullName,
+                        "--body-file", $usagePath
+                    ) | Out-Null
+                }
+            }
+        }
+        else {
+            Save-ClientStatusDiagnostic "issue-failed" $result.Output
+        }
+    }
+    catch {
+        Save-ClientStatusDiagnostic "issue-failed" $_.Exception.Message
+    }
+    finally {
+        $script:IsSendingClientStatus = $false
     }
 }
 
@@ -597,20 +2303,38 @@ function Test-UpdateFileIntegrity($path, $fileInfo) {
     }
 }
 
-function Test-IsNewerVersion($latestVersion, $currentVersion) {
-    if ([string]::IsNullOrWhiteSpace($latestVersion) -or [string]::IsNullOrWhiteSpace($currentVersion)) {
-        return $false
+function Compare-VersionLabel($publishedVersion, $currentVersion) {
+    if ([string]::IsNullOrWhiteSpace($publishedVersion) -or [string]::IsNullOrWhiteSpace($currentVersion)) {
+        return "invalid"
     }
 
-    if ($latestVersion -eq $currentVersion) {
-        return $false
+    if ($publishedVersion -eq $currentVersion) {
+        return "same"
     }
 
     try {
-        return ([version]$latestVersion) -gt ([version]$currentVersion)
+        if (([version]$publishedVersion) -gt ([version]$currentVersion)) {
+            return "newer"
+        }
+
+        return "older"
     }
     catch {
-        return $latestVersion -ne $currentVersion
+        return "different"
+    }
+}
+
+function Test-IsDifferentVersion($publishedVersion, $currentVersion) {
+    $label = Compare-VersionLabel $publishedVersion $currentVersion
+    return $label -ne "same" -and $label -ne "invalid"
+}
+
+function Get-UpdatePromptTitle($publishedVersion, $currentVersion) {
+    switch (Compare-VersionLabel $publishedVersion $currentVersion) {
+        "newer" { return "Yeni surum bulundu." }
+        "older" { return "Yayindaki base surum farkli." }
+        "different" { return "Farkli surum bulundu." }
+        default { return "Surum bilgisi kontrol ediliyor." }
     }
 }
 
@@ -633,7 +2357,7 @@ function Start-SelfUpdate($manifest, $manifestUrl) {
     $backupPath = Join-Path $backupDir "github-pages-manager-$AppVersion-$(Get-Date -Format 'yyyyMMdd-HHmmss').bat"
 
     Write-Host ""
-    Write-Host "[INFO] Yeni surum indiriliyor..."
+    Write-StatusInfo "Yayindaki surum indiriliyor..."
 
     $candidates = @(Get-UpdateDownloadCandidates $manifest $manifestUrl)
 
@@ -659,7 +2383,7 @@ function Start-SelfUpdate($manifest, $manifestUrl) {
         $attempt++
         Remove-Item -LiteralPath $downloadPath -Force -ErrorAction SilentlyContinue
 
-        Write-Host "[INFO] Kaynak deneniyor ($attempt/$($candidates.Count)): $($candidate.Label)"
+        Write-StatusInfo "Kaynak deneniyor ($attempt/$($candidates.Count)): $($candidate.Label)"
 
         try {
             if ($candidate.Kind -eq "url") {
@@ -748,8 +2472,8 @@ Start-Process -FilePath $Target -WorkingDirectory (Split-Path -Parent $Target)
 
     [System.IO.File]::WriteAllText($updaterPath, $updaterScript, [System.Text.UTF8Encoding]::new($false))
 
-    Write-Host "[OK] Guncelleme indirildi ve dogrulandi."
-    Write-Host "[INFO] Uygulama guncellenip yeniden baslatilacak..."
+    Write-StatusOk "Guncelleme indirildi ve dogrulandi."
+    Write-StatusInfo "Uygulama guncellenip yeniden baslatilacak..."
 
     Start-Process powershell -WindowStyle Hidden -ArgumentList @(
         "-NoProfile",
@@ -764,24 +2488,7 @@ Start-Process -FilePath $Target -WorkingDirectory (Split-Path -Parent $Target)
     exit 0
 }
 
-function Check-ForUpdates {
-    $manifestUrl = Get-EffectiveUpdateManifestUrl
-
-    if ([string]::IsNullOrWhiteSpace($manifestUrl)) {
-        return
-    }
-
-    try {
-        $manifest = Invoke-JsonUrl $manifestUrl
-    }
-    catch {
-        $manifest = Get-LocalAdminManifest
-
-        if ($null -eq $manifest) {
-            return
-        }
-    }
-
+function Show-UpdatePrompt($manifest, $manifestSourceUrl, $sourceNotice = $null) {
     if ($null -eq $manifest) {
         return
     }
@@ -803,32 +2510,28 @@ function Check-ForUpdates {
         return
     }
 
-    if (!(Test-IsNewerVersion $manifest.version $AppVersion)) {
+    if (!(Test-IsDifferentVersion $manifest.version $AppVersion)) {
         return
     }
 
     Header
-    Write-Host "Yeni guncelleme bulundu."
-    Write-Host ""
-    Write-Host "Mevcut surum: $AppVersion"
-    Write-Host "Yeni surum: $($manifest.version)"
-    Write-Host ""
-    Write-Host "Guncelleme notlari:"
-
-    if ($manifestNotes.Count -eq 0) {
-        Write-Host "- Not yok."
+    Write-BoxMessage "version switch" (Get-UpdatePromptTitle $manifest.version $AppVersion) "Cyan"
+    if (![string]::IsNullOrWhiteSpace($sourceNotice)) {
+        Write-StatusWarn $sourceNotice
     }
-    else {
-        foreach ($note in $manifestNotes) {
-            Write-Host "- $note"
-        }
-    }
+    Write-ThemeValue "mevcut" $AppVersion
+    Write-ThemeValue "yayindaki" $manifest.version
+    Write-Host ""
+    Write-SectionTitle "release notes"
+    Write-ManifestNotes $manifest
 
     Write-Host ""
-    Write-Host "1) Guncelle"
-    Write-Host "2) Simdilik gec"
+    Write-MenuFrame "update" {
+        Write-MenuItem "1" "Guncelle"
+        Write-MenuItem "2" "Simdilik gec"
+    }
     Write-Host ""
-    Write-Host "Secim:"
+    Write-KeyPrompt "secim"
 
     $choice = Read-KeyChoice @("1", "2")
 
@@ -837,11 +2540,40 @@ function Check-ForUpdates {
     }
 
     try {
-        Start-SelfUpdate $manifest $manifestUrl
+        Start-SelfUpdate $manifest $manifestSourceUrl
     }
     catch {
         Show-Error $_.Exception.Message
         Pause-Back
+    }
+}
+
+function Check-ForUpdates {
+    $manifestUrl = Get-EffectiveUpdateManifestUrl
+
+    if ([string]::IsNullOrWhiteSpace($manifestUrl)) {
+        return
+    }
+
+    $cache = Get-UpdateCheckCache
+
+    try {
+        $manifestResult = Get-UpdateManifest $manifestUrl
+        Save-UpdateCheckCache $manifestUrl $manifestResult.SourceUrl $manifestResult.Manifest
+        Show-UpdatePrompt $manifestResult.Manifest $manifestResult.SourceUrl
+        return
+    }
+    catch {
+        if ($null -ne $cache -and $null -ne $cache.Manifest) {
+            Show-UpdatePrompt $cache.Manifest $cache.SourceUrl "GitHub okunamadi, son bilinen manifest kullaniliyor."
+            return
+        }
+
+        $manifest = Get-LocalAdminManifest
+
+        if ($null -ne $manifest) {
+            Show-UpdatePrompt $manifest $manifestUrl "GitHub okunamadi, yerel admin manifesti kullaniliyor."
+        }
     }
 }
 
@@ -851,41 +2583,31 @@ function Show-UpdateNotes {
     $manifestUrl = Get-EffectiveUpdateManifestUrl
 
     if ([string]::IsNullOrWhiteSpace($manifestUrl)) {
-        Write-Host "Guncelleme kaynagi henuz ayarlanmamis."
-        Write-Host ""
-        Write-Host "Admin BAT ile ilk yayin yapildiktan sonra bu bolum aktif olur."
+        Write-BoxMessage "update notes" "Guncelleme kaynagi henuz ayarlanmamis. Admin BAT ile ilk yayin yapildiktan sonra bu bolum aktif olur." "Yellow"
         Pause-Back
         return
     }
 
-    Write-Host "Guncelleme manifesti:"
-    Write-Host $manifestUrl
-    Write-Host ""
-
     try {
-        $manifest = Invoke-JsonUrl $manifestUrl
+        $manifestResult = Get-UpdateManifest $manifestUrl
+        $manifest = $manifestResult.Manifest
     }
     catch {
-        $remoteError = $_.Exception.Message
         $manifest = Get-LocalAdminManifest
 
         if ($null -eq $manifest) {
-            Write-Host "[HATA] Guncelleme notlari okunamadi."
-            Write-Host $remoteError
+            Write-BoxMessage "update notes" "Guncelleme notlari su an okunamadi. Biraz sonra tekrar deneyebilirsin." "Yellow"
             Pause-Back
             return
         }
 
-        Write-Host "[UYARI] GitHub manifesti okunamadi. Yerel son kopya gosteriliyor."
-        Write-Host ""
+        Write-BoxMessage "offline cache" "GitHub'a ulasilamadi. Yerel son kopya gosteriliyor." "Yellow"
     }
 
     $localManifest = Get-LocalAdminManifest
 
     if ([string]::IsNullOrWhiteSpace($manifest.version) -and $null -ne $localManifest) {
         $manifest = $localManifest
-        Write-Host "[UYARI] GitHub manifesti beklenen formatta degil. Yerel son kopya gosteriliyor."
-        Write-Host ""
     }
 
     $notes = @(Get-ManifestNotes $manifest)
@@ -893,28 +2615,13 @@ function Show-UpdateNotes {
     if ($notes.Count -eq 0 -and $null -ne $localManifest -and $localManifest.version -eq $manifest.version) {
         $manifest = $localManifest
         $notes = @(Get-ManifestNotes $manifest)
-        Write-Host "[UYARI] GitHub manifestinde not yok. Yerel son notlar gosteriliyor."
-        Write-Host ""
     }
 
-    Write-Host "Mevcut uygulama surumu: $AppVersion"
-    Write-Host "Yayindaki son surum: $($manifest.version)"
-
-    if (![string]::IsNullOrWhiteSpace($manifest.publishedAt)) {
-        Write-Host "Yayin zamani: $($manifest.publishedAt)"
-    }
-
+    Write-ThemeValue "mevcut" $AppVersion
+    Write-ThemeValue "yayindaki" $manifest.version
     Write-Host ""
-    Write-Host "Guncelleme notlari:"
-
-    if ($notes.Count -eq 0) {
-        Write-Host "- Not yok."
-    }
-    else {
-        foreach ($note in $notes) {
-            Write-Host "- $note"
-        }
-    }
+    Write-SectionTitle "release notes"
+    Write-ManifestNotes $manifest
 
     Pause-Back
 }
@@ -929,11 +2636,11 @@ function Copy-DeviceLoginCode-IfPresent($text) {
 
         try {
             Set-Clipboard -Value $code
-            Write-Host "[OK] GitHub giris kodu panoya kopyalandi: $code"
+            Write-StatusOk "GitHub giris kodu panoya kopyalandi: $code"
         }
         catch {
-            Write-Host "[UYARI] GitHub giris kodu panoya kopyalanamadi:"
-            Write-Host $code
+            Write-StatusWarn "GitHub giris kodu panoya kopyalanamadi."
+            Write-ThemeValue "kod" $code
         }
     }
 }
@@ -948,14 +2655,14 @@ function Open-DeviceLoginUrl-IfPresent($text) {
 
         if ($script:LastOpenedDeviceLoginUrl -ne $url) {
             $script:LastOpenedDeviceLoginUrl = $url
-            Write-Host "[INFO] GitHub device login sayfasi tarayicida aciliyor..."
+            Write-StatusInfo "GitHub device login sayfasi tarayicida aciliyor..."
 
             try {
                 Start-Process $url
             }
             catch {
-                Write-Host "[UYARI] Tarayici otomatik acilamadi. Linki elle ac:"
-                Write-Host $url
+                Write-StatusWarn "Tarayici otomatik acilamadi. Linki elle ac:"
+                Write-ThemeValue "url" $url
             }
         }
     }
@@ -1008,7 +2715,7 @@ function Invoke-GhInteractiveWithRetry($argsList, $label, $maxAttempts, $delaySe
     for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
         if ($attempt -gt 1) {
             Write-Host ""
-            Write-Host "[INFO] $label tekrar deneniyor ($attempt/$maxAttempts)..."
+            Write-StatusInfo "$label tekrar deneniyor ($attempt/$maxAttempts)..."
         }
 
         $result = Invoke-GhInteractiveResult $argsList
@@ -1020,7 +2727,7 @@ function Invoke-GhInteractiveWithRetry($argsList, $label, $maxAttempts, $delaySe
         if ($attempt -lt $maxAttempts) {
             $waitSeconds = $delaySeconds * $attempt
             Write-Host ""
-            Write-Host "[UYARI] $label basarisiz oldu. $waitSeconds saniye sonra tekrar denenecek..."
+            Write-StatusWarn "$label basarisiz oldu. $waitSeconds saniye sonra tekrar denenecek..."
             Start-Sleep -Seconds $waitSeconds
         }
     }
@@ -1106,7 +2813,7 @@ function Parse-GhCredentialMismatch($output) {
 
 function Repair-GhAuthForOwner($expectedOwner, $failureOutput) {
     if ([string]::IsNullOrWhiteSpace($expectedOwner)) {
-        Write-Host "[HATA] Beklenen GitHub kullanicisi belirlenemedi."
+        Write-BoxMessage "auth error" "Beklenen GitHub kullanicisi belirlenemedi." "Red"
         return $false
     }
 
@@ -1130,23 +2837,16 @@ function Repair-GhAuthForOwner($expectedOwner, $failureOutput) {
     $usersToLogout = @($usersToLogout | Where-Object { ![string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
 
     Header
-    Write-Host "GitHub CLI hesap kaydi onariliyor."
-    Write-Host ""
-    Write-Host "Beklenen repo sahibi:"
-    Write-Host $expectedOwner
-    Write-Host ""
+    Write-BoxMessage "auth repair" "GitHub CLI hesap kaydi onariliyor." "Cyan"
+    Write-ThemeValue "beklenen" $expectedOwner
 
     if ($null -ne $mismatch) {
-        Write-Host "Algilanan eski / hatali kayit:"
-        Write-Host $mismatch.OldUser
-        Write-Host ""
-        Write-Host "Tarayicidan gelen hesap:"
-        Write-Host $mismatch.NewUser
-        Write-Host ""
+        Write-ThemeValue "eski kayit" $mismatch.OldUser
+        Write-ThemeValue "gelen hesap" $mismatch.NewUser
     }
 
     if ($storedUsers.Count -gt 0) {
-        Write-Host "GitHub CLI'da gorunen hesaplar:"
+        Write-SectionTitle "stored gh accounts"
         foreach ($user in $storedUsers) {
             Write-Host "- $user"
         }
@@ -1154,15 +2854,12 @@ function Repair-GhAuthForOwner($expectedOwner, $failureOutput) {
     }
 
     foreach ($user in $usersToLogout) {
-        Write-Host "[INFO] Eski / uyumsuz GitHub CLI kaydi temizleniyor: $user"
+        Write-StatusInfo "Eski / uyumsuz GitHub CLI kaydi temizleniyor: $user"
         Invoke-GhSilent @("auth", "logout", "--hostname", "github.com", "--user", $user, "--yes") | Out-Null
     }
 
-    Write-Host ""
-    Write-Host "[INFO] GitHub girisi yenilenecek."
-    Write-Host "Tarayicida su repo sahibi hesapla onay ver:"
-    Write-Host $expectedOwner
-    Write-Host ""
+    Write-BoxMessage "github login" "GitHub girisi yenilenecek. Tarayicida repo sahibi hesapla onay ver." "Cyan"
+    Write-ThemeValue "hesap" $expectedOwner
 
     $loginResult = Invoke-GhInteractiveResult @("auth", "login", "--hostname", "github.com", "--web", "--git-protocol", "https", "--scopes", "repo,delete_repo")
 
@@ -1170,8 +2867,7 @@ function Repair-GhAuthForOwner($expectedOwner, $failureOutput) {
         $existingSwitch = Invoke-GhSilent @("auth", "switch", "--hostname", "github.com", "--user", $expectedOwner)
 
         if ($existingSwitch.Code -ne 0) {
-            Write-Host ""
-            Write-Host "[HATA] GitHub girisi yenilenemedi."
+            Write-BoxMessage "auth error" "GitHub girisi yenilenemedi." "Red"
             Write-Host $loginResult.Output
             return $false
         }
@@ -1181,23 +2877,17 @@ function Repair-GhAuthForOwner($expectedOwner, $failureOutput) {
 
     if ($activeAfterLogin -ne $expectedOwner) {
         if (![string]::IsNullOrWhiteSpace($activeAfterLogin)) {
-            Write-Host ""
-            Write-Host "[INFO] Yanlis hesapla giris algilandi, kayit temizleniyor: $activeAfterLogin"
+            Write-StatusInfo "Yanlis hesapla giris algilandi, kayit temizleniyor: $activeAfterLogin"
             Invoke-GhSilent @("auth", "logout", "--hostname", "github.com", "--user", $activeAfterLogin, "--yes") | Out-Null
         }
 
-        Write-Host ""
-        Write-Host "[HATA] Yanlis GitHub hesabi ile izin verildi."
-        Write-Host ""
-        Write-Host "Beklenen hesap:"
-        Write-Host $expectedOwner
-        Write-Host ""
-        Write-Host "Algilanan hesap:"
+        Write-BoxMessage "wrong account" "Yanlis GitHub hesabi ile izin verildi." "Red"
+        Write-ThemeValue "beklenen" $expectedOwner
         if ([string]::IsNullOrWhiteSpace($activeAfterLogin)) {
-            Write-Host "Bilinmiyor"
+            Write-ThemeValue "algilanan" "Bilinmiyor"
         }
         else {
-            Write-Host $activeAfterLogin
+            Write-ThemeValue "algilanan" $activeAfterLogin
         }
         return $false
     }
@@ -1205,24 +2895,20 @@ function Repair-GhAuthForOwner($expectedOwner, $failureOutput) {
     $switchResult = Invoke-GhSilent @("auth", "switch", "--hostname", "github.com", "--user", $expectedOwner)
 
     if ($switchResult.Code -ne 0) {
-        Write-Host ""
-        Write-Host "[HATA] GitHub CLI beklenen hesaba gecemedi."
+        Write-BoxMessage "auth error" "GitHub CLI beklenen hesaba gecemedi." "Red"
         Write-Host $switchResult.Output
         return $false
     }
 
     if (Test-GhHasScope "delete_repo") {
-        Write-Host ""
-        Write-Host "[OK] delete_repo yetkisi mevcut."
+        Write-StatusOk "delete_repo yetkisi mevcut."
     }
     else {
-        Write-Host ""
-        Write-Host "[INFO] delete_repo yetkisi yenileniyor..."
+        Write-StatusInfo "delete_repo yetkisi yenileniyor..."
         $refreshResult = Invoke-GhInteractiveResult @("auth", "refresh", "--hostname", "github.com", "-s", "delete_repo")
 
         if ($refreshResult.Code -ne 0) {
-            Write-Host ""
-            Write-Host "[HATA] delete_repo yetkisi otomatik yenilenemedi."
+            Write-BoxMessage "auth error" "delete_repo yetkisi otomatik yenilenemedi." "Red"
             Write-Host $refreshResult.Output
             return $false
         }
@@ -1231,8 +2917,7 @@ function Repair-GhAuthForOwner($expectedOwner, $failureOutput) {
     $setupGit = Invoke-GhSilent @("auth", "setup-git")
 
     if ($setupGit.Code -ne 0) {
-        Write-Host ""
-        Write-Host "[UYARI] gh auth setup-git tamamlanamadi."
+        Write-StatusWarn "gh auth setup-git tamamlanamadi."
         Write-Host $setupGit.Output
     }
 
@@ -1261,25 +2946,21 @@ function Ensure-OwnerAuth($owner) {
 
     Header
 
-    Write-Host "GitHub hesap uyusmazligi var."
-    Write-Host ""
-    Write-Host "Silinecek repo sahibi:"
-    Write-Host $owner
-    Write-Host ""
-    Write-Host "GitHub CLI aktif hesabi:"
+    Write-BoxMessage "account mismatch" "Bu repoyu silmek icin GitHub CLI'da repo sahibi hesapla giris yapman gerekiyor." "Yellow"
+    Write-ThemeValue "repo sahibi" $owner
     if ([string]::IsNullOrWhiteSpace($active)) {
-        Write-Host "Bilinmiyor / giris yok"
+        Write-ThemeValue "aktif hesap" "Bilinmiyor / giris yok"
     }
     else {
-        Write-Host $active
+        Write-ThemeValue "aktif hesap" $active
     }
     Write-Host ""
-    Write-Host "Bu repoyu silmek icin GitHub CLI'da repo sahibi hesapla giris yapman gerekiyor."
+    Write-MenuFrame "auth" {
+        Write-MenuItem "1" "Bu hesapla giris yap / yeniden yetkilendir"
+        Write-MenuItem "0" "Geri"
+    }
     Write-Host ""
-    Write-Host "1) Bu hesapla giris yap / yeniden yetkilendir"
-    Write-Host "0) Geri"
-    Write-Host ""
-    Write-Host "Secim:"
+    Write-KeyPrompt "secim"
 
     $choice = Read-KeyChoice @("1", "0")
 
@@ -1288,20 +2969,13 @@ function Ensure-OwnerAuth($owner) {
     }
 
     Header
-    Write-Host "Tarayici acilacak."
-    Write-Host ""
-    Write-Host "Onemli:"
-    Write-Host "Tarayicida su GitHub hesabiyla giris yap:"
-    Write-Host $owner
-    Write-Host ""
-    Write-Host "Farkli hesapla izin verirsen GitHub yine hata verir."
-    Write-Host ""
+    Write-BoxMessage "github login" "Tarayici acilacak. Farkli hesapla izin verirsen GitHub yine hata verir." "Cyan"
+    Write-ThemeValue "hesap" $owner
 
     $loginCode = Invoke-GhInteractive @("auth", "login", "--hostname", "github.com", "--web", "--git-protocol", "https", "--scopes", "repo,delete_repo")
 
     if ($loginCode -ne 0) {
-        Write-Host ""
-        Write-Host "[HATA] GitHub girisi tamamlanamadi."
+        Write-BoxMessage "auth error" "GitHub girisi tamamlanamadi." "Red"
         Pause-Back
         return $false
     }
@@ -1309,11 +2983,7 @@ function Ensure-OwnerAuth($owner) {
     $switchAgain = Invoke-GhSilent @("auth", "switch", "--hostname", "github.com", "--user", $owner)
 
     if ($switchAgain.Code -ne 0) {
-        Write-Host ""
-        Write-Host "[HATA] GitHub CLI hala $owner hesabina gecemiyor."
-        Write-Host ""
-        Write-Host "Sebep genelde tarayicida farkli hesapla izin verilmesi."
-        Write-Host "GitHub'dan cikis yapip $owner hesabi ile tekrar dene."
+        Write-BoxMessage "auth error" "GitHub CLI hala $owner hesabina gecemiyor. Sebep genelde tarayicida farkli hesapla izin verilmesi." "Red"
         Pause-Back
         return $false
     }
@@ -1321,16 +2991,9 @@ function Ensure-OwnerAuth($owner) {
     $activeAfterLogin = Get-ActiveGitHubUser
 
     if ($activeAfterLogin -ne $owner) {
-        Write-Host ""
-        Write-Host "[HATA] Yanlis hesap aktif."
-        Write-Host ""
-        Write-Host "Beklenen hesap:"
-        Write-Host $owner
-        Write-Host ""
-        Write-Host "Aktif hesap:"
-        Write-Host $activeAfterLogin
-        Write-Host ""
-        Write-Host "Tarayicida dogru GitHub hesabina gecip tekrar dene."
+        Write-BoxMessage "wrong account" "Tarayicida dogru GitHub hesabina gecip tekrar dene." "Red"
+        Write-ThemeValue "beklenen" $owner
+        Write-ThemeValue "aktif" $activeAfterLogin
         Pause-Back
         return $false
     }
@@ -1354,7 +3017,7 @@ function Install-Tool($id, $label) {
         throw "winget bulunamadi. $label otomatik kurulamiyor. Once winget/App Installer kurulu olmali."
     }
 
-    Write-Host "[INFO] $label bulunamadi. Winget ile kuruluyor..."
+    Write-StatusInfo "$label bulunamadi. Winget ile kuruluyor..."
     winget install --id $id -e --accept-source-agreements --accept-package-agreements
 
     Refresh-Path
@@ -1382,10 +3045,7 @@ function Ensure-GitHubAuth {
     $status = Invoke-GhSilent @("auth", "status")
 
     if ($status.Code -ne 0) {
-        Write-Host ""
-        Write-Host "[INFO] GitHub girisi yok."
-        Write-Host "[INFO] Tarayici acilacak. GitHub izin ekraninda onay ver."
-        Write-Host ""
+        Write-BoxMessage "github login" "GitHub girisi yok. Tarayici acilacak; GitHub izin ekraninda onay ver." "Cyan"
 
         $loginCode = Invoke-GhInteractive @("auth", "login", "--hostname", "github.com", "--web", "--git-protocol", "https", "--scopes", "repo")
 
@@ -1399,6 +3059,11 @@ function Ensure-GitHubAuth {
     if ([string]::IsNullOrWhiteSpace($script:GhUser)) {
         throw "GitHub kullanici adi alinamadi."
     }
+}
+
+function Ensure-GitHubReady {
+    Ensure-Tools
+    Ensure-GitHubAuth
 }
 
 function Load-Db {
@@ -1421,7 +3086,7 @@ function Load-Db {
         return @($data)
     }
     catch {
-        Write-Host "[UYARI] Kayit dosyasi okunamadi. Sifirlaniyor."
+        Write-StatusWarn "Kayit dosyasi okunamadi. Sifirlaniyor."
         [System.IO.File]::WriteAllText($DbPath, "[]", [System.Text.UTF8Encoding]::new($false))
         return @()
     }
@@ -1473,8 +3138,15 @@ function Upsert-Record($record) {
 
     $items = @(Load-Db)
 
+    $recordFullName = [string]$record.FullName
+    $recordLocalPath = [string]$record.LocalPath
+
     $items = @($items | Where-Object {
-        $_.FullName -ne $record.FullName -and $_.LocalPath -ne $record.LocalPath
+        $existingFullName = [string]$_.FullName
+        $existingLocalPath = [string]$_.LocalPath
+        $sameFullName = (![string]::IsNullOrWhiteSpace($existingFullName) -and $existingFullName.Equals($recordFullName, [System.StringComparison]::OrdinalIgnoreCase))
+        $sameLocalPath = (![string]::IsNullOrWhiteSpace($existingLocalPath) -and ![string]::IsNullOrWhiteSpace($recordLocalPath) -and $existingLocalPath.Equals($recordLocalPath, [System.StringComparison]::OrdinalIgnoreCase))
+        !$sameFullName -and !$sameLocalPath
     })
 
     $items += $record
@@ -1482,15 +3154,15 @@ function Upsert-Record($record) {
     Save-Db $items
 
     Write-Host ""
-    Write-Host "[OK] Repo kayda yazildi:"
-    Write-Host $DbPath
+    Write-StatusOk "Repo kayda yazildi."
+    Write-ThemeValue "kayit" $DbPath
 }
 
 function Remove-Record($fullName) {
     $items = @(Load-Db)
 
     $items = @($items | Where-Object {
-        $_.FullName -ne $fullName
+        !([string]$_.FullName).Equals([string]$fullName, [System.StringComparison]::OrdinalIgnoreCase)
     })
 
     Save-Db $items
@@ -1501,10 +3173,22 @@ function Get-SafeRepoName {
     $safe = $folderName -replace '[^A-Za-z0-9._-]', '-'
     $safe = $safe -replace '-+', '-'
     $safe = $safe.Trim([char[]]"-.")
-    $safe = $safe.ToLowerInvariant()
 
     if ([string]::IsNullOrWhiteSpace($safe)) {
         $safe = "demo-site"
+    }
+
+    return $safe
+}
+
+function Normalize-RepoNameInput($repoName) {
+    $safe = ([string]$repoName).Trim()
+    $safe = $safe -replace '[^A-Za-z0-9._-]', '-'
+    $safe = $safe -replace '-+', '-'
+    $safe = $safe.Trim([char[]]"-.")
+
+    if ([string]::IsNullOrWhiteSpace($safe)) {
+        return (Get-SafeRepoName)
     }
 
     return $safe
@@ -1523,44 +3207,278 @@ function Split-FullRepoName($fullName) {
     }
 }
 
-function Ensure-GitIgnore {
-    $gitignorePath = ".gitignore"
-    $batName = Split-Path -Leaf $env:BAT_FILE
+function Get-FullPathSafe($path) {
+    return [System.IO.Path]::GetFullPath($path)
+}
 
-    $linesToAdd = @(
-        $LocalMapFile,
-        $batName,
-        "github-pages-update-admin.bat",
-        "node_modules/",
-        ".env",
-        ".env.*",
-        "*.log",
-        ".DS_Store",
-        "Thumbs.db"
-    )
+function Assert-PathInside($childPath, $parentPath) {
+    $parentFull = Get-FullPathSafe $parentPath
+    $childFull = Get-FullPathSafe $childPath
+    $separator = [System.IO.Path]::DirectorySeparatorChar
+    $parentPrefix = $parentFull.TrimEnd($separator) + $separator
 
-    if (!(Test-Path $gitignorePath)) {
-        New-Item -ItemType File -Path $gitignorePath | Out-Null
+    if ($childFull -ne $parentFull -and !$childFull.StartsWith($parentPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Guvenlik kontrolu basarisiz. Hedef klasor uygulama staging alani disinda: $childFull"
+    }
+}
+
+function Ensure-WorktreesDir {
+    Ensure-Storage
+
+    if (!(Test-Path $WorktreesDir)) {
+        New-Item -ItemType Directory -Path $WorktreesDir -Force | Out-Null
+    }
+}
+
+function Get-RepoWorktreePath($fullName) {
+    if ([string]::IsNullOrWhiteSpace($fullName)) {
+        throw "Staging klasoru icin repo adi bos geldi."
     }
 
-    $existing = @(Get-Content -LiteralPath $gitignorePath -ErrorAction SilentlyContinue)
+    Ensure-WorktreesDir
 
-    foreach ($line in $linesToAdd) {
-        if ($existing -notcontains $line) {
-            Add-Content -LiteralPath $gitignorePath -Value $line
+    $safe = $fullName -replace '/', '__'
+    $safe = $safe -replace '[^A-Za-z0-9._-]', '-'
+    $safe = $safe.Trim([char[]]"-.")
+
+    if ([string]::IsNullOrWhiteSpace($safe)) {
+        throw "Staging klasoru icin guvenli repo adi uretilemedi."
+    }
+
+    $path = Join-Path $WorktreesDir $safe
+    Assert-PathInside $path $WorktreesDir
+    return $path
+}
+
+function New-RepoRecord($fullName, $localPath) {
+    $split = Split-FullRepoName $fullName
+    $owner = $split.Owner
+    $repoName = $split.Repo
+    $siteUrl = "https://$owner.github.io/$repoName/"
+    $repoUrl = "https://github.com/$fullName"
+    $worktreePath = Get-RepoWorktreePath $fullName
+
+    return [PSCustomObject]@{
+        FullName = $fullName
+        Owner = $owner
+        RepoName = $repoName
+        LocalPath = $localPath
+        WorktreePath = $worktreePath
+        SiteUrl = $siteUrl
+        RepoUrl = $repoUrl
+        UpdatedAt = (Get-Date).ToString("s")
+    }
+}
+
+function Get-GitHubCanonicalRepo($fullName) {
+    if ([string]::IsNullOrWhiteSpace($fullName)) {
+        return $null
+    }
+
+    $view = Invoke-GhSilent @("repo", "view", $fullName, "--json", "name,owner,url", "--jq", "{name:.name,owner:.owner.login,url:.url}")
+
+    if ($view.Code -ne 0 -or [string]::IsNullOrWhiteSpace($view.Output)) {
+        return $null
+    }
+
+    try {
+        $data = $view.Output | ConvertFrom-Json
+
+        if ($null -eq $data -or [string]::IsNullOrWhiteSpace($data.owner) -or [string]::IsNullOrWhiteSpace($data.name)) {
+            return $null
+        }
+
+        return [PSCustomObject]@{
+            Owner = [string]$data.owner
+            RepoName = [string]$data.name
+            FullName = "$($data.owner)/$($data.name)"
+            RepoUrl = if (![string]::IsNullOrWhiteSpace($data.url)) { [string]$data.url } else { "https://github.com/$($data.owner)/$($data.name)" }
+        }
+    }
+    catch {
+        return $null
+    }
+}
+
+function Resolve-CanonicalRepoFullName($fullName) {
+    $canonical = Get-GitHubCanonicalRepo $fullName
+
+    if ($null -ne $canonical -and ![string]::IsNullOrWhiteSpace($canonical.FullName)) {
+        return [string]$canonical.FullName
+    }
+
+    return $fullName
+}
+
+function Repair-RepoRecordCasing($record) {
+    if ($null -eq $record -or [string]::IsNullOrWhiteSpace($record.FullName)) {
+        return $record
+    }
+
+    $canonicalFullName = Resolve-CanonicalRepoFullName ([string]$record.FullName)
+
+    if ([string]::IsNullOrWhiteSpace($canonicalFullName)) {
+        return $record
+    }
+
+    $localPath = [string]$record.LocalPath
+    $updated = New-RepoRecord $canonicalFullName $localPath
+
+    if ([string]$updated.FullName -ne [string]$record.FullName -or [string]$updated.SiteUrl -ne [string]$record.SiteUrl -or [string]$updated.RepoUrl -ne [string]$record.RepoUrl) {
+        Upsert-Record $updated
+
+        if (![string]::IsNullOrWhiteSpace($localPath) -and (Get-FullPathSafe $localPath) -eq (Get-FullPathSafe (Get-Location).Path)) {
+            Save-LocalMap $updated.FullName $updated.RepoName $updated.SiteUrl
+        }
+
+        Write-StatusInfo "Repo kaydi GitHub'daki gercek adla esitlendi: $($updated.FullName)"
+    }
+
+    return $updated
+}
+
+function Test-ShouldSkipPublishItem($relativePath, $isDirectory) {
+    if ([string]::IsNullOrWhiteSpace($relativePath)) {
+        return $false
+    }
+
+    $normalized = ($relativePath -replace '\\', '/').Trim("/")
+    $segments = @($normalized.Split("/", [System.StringSplitOptions]::RemoveEmptyEntries))
+
+    foreach ($segment in $segments) {
+        $lowerSegment = $segment.ToLowerInvariant()
+
+        if ($lowerSegment -eq ".git" -or $lowerSegment -eq "node_modules") {
+            return $true
+        }
+
+        if ($lowerSegment -eq ".env" -or $lowerSegment.StartsWith(".env.")) {
+            return $true
+        }
+    }
+
+    if ($segments.Count -eq 0) {
+        return $false
+    }
+
+    $leaf = $segments[$segments.Count - 1].ToLowerInvariant()
+
+    if ($leaf -in @(
+        ".gh-pages-publisher.json",
+        ".gitignore",
+        ".nojekyll",
+        "github-pages-manager.bat",
+        "github-pages-update-admin.bat",
+        ".ds_store",
+        "thumbs.db"
+    )) {
+        return $true
+    }
+
+    if (!$isDirectory -and $leaf -like "*.log") {
+        return $true
+    }
+
+    return $false
+}
+
+function Clear-StagingContent($stagingPath) {
+    Ensure-WorktreesDir
+    Assert-PathInside $stagingPath $WorktreesDir
+
+    if (!(Test-Path $stagingPath)) {
+        New-Item -ItemType Directory -Path $stagingPath -Force | Out-Null
+        return
+    }
+
+    foreach ($item in @(Get-ChildItem -LiteralPath $stagingPath -Force)) {
+        if ($item.Name -eq ".git") {
+            continue
+        }
+
+        Remove-Item -LiteralPath $item.FullName -Recurse -Force
+    }
+}
+
+function Copy-PublishTree($sourceDir, $destDir, $baseRoot) {
+    foreach ($item in @(Get-ChildItem -LiteralPath $sourceDir -Force)) {
+        $relativePath = $item.FullName.Substring($baseRoot.Length).TrimStart([char[]]"\/")
+
+        if (Test-ShouldSkipPublishItem $relativePath $item.PSIsContainer) {
+            continue
+        }
+
+        $targetPath = Join-Path $destDir $item.Name
+
+        if ($item.PSIsContainer) {
+            New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
+            Copy-PublishTree $item.FullName $targetPath $baseRoot
+        }
+        else {
+            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+            Copy-Item -LiteralPath $item.FullName -Destination $targetPath -Force
         }
     }
 }
 
-function Save-LocalMap($fullName, $repoName, $siteUrl) {
-    $map = [PSCustomObject]@{
-        FullName = $fullName
-        RepoName = $repoName
-        SiteUrl = $siteUrl
-        SavedAt = (Get-Date).ToString("s")
+function Sync-ProjectToStaging($sourcePath, $stagingPath) {
+    if (!(Test-Path $sourcePath)) {
+        throw "Kaynak proje klasoru bulunamadi: $sourcePath"
     }
 
-    $map | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $LocalMapFile -Encoding UTF8
+    $sourceFull = Get-FullPathSafe $sourcePath
+    $stagingFull = Get-FullPathSafe $stagingPath
+
+    Assert-PathInside $stagingFull $WorktreesDir
+    Clear-StagingContent $stagingFull
+
+    Write-StatusInfo "Proje dosyalari staging klasorune hazirlaniyor..."
+    Copy-PublishTree $sourceFull $stagingFull $sourceFull
+
+    $nojekyllPath = Join-Path $stagingFull ".nojekyll"
+    if (!(Test-Path $nojekyllPath)) {
+        New-Item -ItemType File -Path $nojekyllPath | Out-Null
+    }
+}
+
+function Remove-StagingForRecord($record) {
+    try {
+        if ($null -eq $record -or [string]::IsNullOrWhiteSpace($record.FullName)) {
+            return
+        }
+
+        $stagingPath = Get-RepoWorktreePath $record.FullName
+
+        if (Test-Path $stagingPath) {
+            Assert-PathInside $stagingPath $WorktreesDir
+            Remove-Item -LiteralPath $stagingPath -Recurse -Force
+        }
+    }
+    catch {
+        Write-StatusWarn "Staging klasoru temizlenemedi: $($_.Exception.Message)"
+    }
+}
+
+function Save-LocalMap($fullName, $repoName, $siteUrl) {
+    try {
+        if ([string]::IsNullOrWhiteSpace($fullName)) {
+            return
+        }
+
+        $map = [PSCustomObject]@{
+            SchemaVersion = 1
+            FullName = [string]$fullName
+            RepoName = [string]$repoName
+            SiteUrl = [string]$siteUrl
+            UpdatedAt = (Get-Date).ToString("s")
+        }
+
+        $json = $map | ConvertTo-Json -Depth 10
+        [System.IO.File]::WriteAllText($LocalMapFile, $json, [System.Text.UTF8Encoding]::new($false))
+    }
+    catch {
+        Write-StatusWarn "Yerel repo baglanti dosyasi yazilamadi: $($_.Exception.Message)"
+    }
 }
 
 function Load-LocalMap {
@@ -1576,40 +3494,72 @@ function Load-LocalMap {
     }
 }
 
-function Ensure-GitRepo($fullName) {
-    if (!(Test-Path ".git")) {
-        Write-Host "[INFO] Git repo baslatiliyor..."
-        & git init
+function Ensure-GitRepo($fullName, $repoPath) {
+    if ([string]::IsNullOrWhiteSpace($repoPath)) {
+        throw "Git staging klasoru bos geldi."
+    }
 
-        if ($LASTEXITCODE -ne 0) {
-            throw "git init basarisiz."
+    if (!(Test-Path $repoPath)) {
+        New-Item -ItemType Directory -Path $repoPath -Force | Out-Null
+    }
+
+    Assert-PathInside $repoPath $WorktreesDir
+    Push-Location $repoPath
+
+    try {
+        if (!(Test-Path ".git")) {
+            Write-StatusInfo "Git staging repo baslatiliyor..."
+            & git init
+
+            if ($LASTEXITCODE -ne 0) {
+                throw "git init basarisiz."
+            }
+        }
+
+        & git branch -M main *> $null
+
+        $currentName = (& git config user.name 2>$null)
+        if ([string]::IsNullOrWhiteSpace($currentName)) {
+            & git config user.name $script:GhUser
+        }
+
+        $currentEmail = (& git config user.email 2>$null)
+        if ([string]::IsNullOrWhiteSpace($currentEmail)) {
+            & git config user.email "$script:GhUser@users.noreply.github.com"
+        }
+
+        $remoteUrl = "https://github.com/$fullName.git"
+        $oldPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+
+        try {
+            $remotes = @(& git remote 2>$null)
+            if ($LASTEXITCODE -ne 0) {
+                throw "Git remote listesi okunamadi."
+            }
+
+            if ($remotes -contains "origin") {
+                & git remote set-url origin $remoteUrl *> $null
+            }
+            else {
+                & git remote add origin $remoteUrl *> $null
+            }
+
+            if ($LASTEXITCODE -ne 0) {
+                throw "Git remote ayarlanamadi."
+            }
+        }
+        finally {
+            $ErrorActionPreference = $oldPreference
         }
     }
-
-    & git branch -M main *> $null
-
-    $currentName = (& git config user.name 2>$null)
-    if ([string]::IsNullOrWhiteSpace($currentName)) {
-        & git config user.name $script:GhUser
-    }
-
-    $currentEmail = (& git config user.email 2>$null)
-    if ([string]::IsNullOrWhiteSpace($currentEmail)) {
-        & git config user.email "$script:GhUser@users.noreply.github.com"
-    }
-
-    $remoteUrl = "https://github.com/$fullName.git"
-
-    & git remote remove origin 2>$null
-    & git remote add origin $remoteUrl
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "Git remote ayarlanamadi."
+    finally {
+        Pop-Location
     }
 }
 
 function Enable-Pages($owner, $repo) {
-    Write-Host "[INFO] GitHub Pages aktif ediliyor..."
+    Write-StatusInfo "GitHub Pages aktif ediliyor..."
 
     $post = Invoke-GhSilent @(
         "api",
@@ -1633,8 +3583,8 @@ function Enable-Pages($owner, $repo) {
         )
 
         if ($put.Code -ne 0) {
-            Write-Host "[UYARI] Pages ayari otomatik tamamlanamadi."
-            Write-Host "Repo yuklendi ama Pages'i GitHub ayarlarindan manuel acman gerekebilir."
+            Write-StatusWarn "Pages ayari otomatik tamamlanamadi."
+            Write-BoxMessage "pages warning" "Repo yuklendi ama Pages'i GitHub ayarlarindan manuel acman gerekebilir." "Yellow"
         }
     }
 }
@@ -1647,7 +3597,7 @@ function Invoke-GitWithRetry($argsList, $label, $maxAttempts, $delaySeconds) {
         for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             if ($attempt -gt 1) {
                 Write-Host ""
-                Write-Host "[INFO] $label tekrar deneniyor ($attempt/$maxAttempts)..."
+                Write-StatusInfo "$label tekrar deneniyor ($attempt/$maxAttempts)..."
             }
 
             & git @argsList 2>&1 | ForEach-Object {
@@ -1663,7 +3613,7 @@ function Invoke-GitWithRetry($argsList, $label, $maxAttempts, $delaySeconds) {
             if ($attempt -lt $maxAttempts) {
                 $waitSeconds = $delaySeconds * $attempt
                 Write-Host ""
-                Write-Host "[UYARI] $label basarisiz oldu. $waitSeconds saniye sonra tekrar denenecek..."
+                Write-StatusWarn "$label basarisiz oldu. $waitSeconds saniye sonra tekrar denenecek..."
                 Start-Sleep -Seconds $waitSeconds
             }
         }
@@ -1675,49 +3625,58 @@ function Invoke-GitWithRetry($argsList, $label, $maxAttempts, $delaySeconds) {
     }
 }
 
-function Commit-And-Push {
-    Write-Host "[INFO] Dosyalar commitleniyor..."
-
-    & git add .
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "git add basarisiz."
+function Commit-And-Push($repoPath) {
+    if ([string]::IsNullOrWhiteSpace($repoPath)) {
+        throw "Git commit klasoru bos geldi."
     }
 
-    & git diff --cached --quiet
+    Assert-PathInside $repoPath $WorktreesDir
+    Push-Location $repoPath
 
-    if ($LASTEXITCODE -ne 0) {
-        & git commit -m "Publish website demo"
+    try {
+        Write-StatusInfo "Dosyalar commitleniyor..."
+
+        & git add -A
 
         if ($LASTEXITCODE -ne 0) {
-            throw "git commit basarisiz."
+            throw "git add basarisiz."
         }
-    }
-    else {
-        Write-Host "[INFO] Yeni commitlenecek degisiklik yok."
-    }
 
-    Write-Host "[INFO] GitHub'a yukleniyor..."
+        & git diff --cached --quiet
 
-    $pushCode = Invoke-GitWithRetry -argsList @("push", "-u", "origin", "main") -label "Normal push" -maxAttempts 3 -delaySeconds 5
+        if ($LASTEXITCODE -ne 0) {
+            & git commit -m "Publish website demo"
 
-    if ($pushCode -ne 0) {
-        Write-Host ""
-        Write-Host "[UYARI] Normal push basarisiz oldu."
-        Write-Host "Sebep genelde GitHub reposunda daha once farkli dosyalar olmasidir."
-        Write-Host ""
-        $force = Read-Host "Uzak repoyu bu klasorle ezmek icin EVET yaz, iptal icin ENTER"
-
-        if ($force -eq "EVET") {
-            $forcePushCode = Invoke-GitWithRetry -argsList @("push", "-u", "origin", "main", "--force") -label "Force push" -maxAttempts 3 -delaySeconds 5
-
-            if ($forcePushCode -ne 0) {
-                throw "Force push da basarisiz oldu."
+            if ($LASTEXITCODE -ne 0) {
+                throw "git commit basarisiz."
             }
         }
         else {
-            throw "Push iptal edildi."
+            Write-StatusInfo "Yeni commitlenecek degisiklik yok."
         }
+
+        Write-StatusInfo "GitHub'a yukleniyor..."
+
+        $pushCode = Invoke-GitWithRetry -argsList @("push", "-u", "origin", "main") -label "Normal push" -maxAttempts 3 -delaySeconds 5
+
+        if ($pushCode -ne 0) {
+            Write-BoxMessage "push warning" "Normal push basarisiz oldu. Sebep genelde GitHub reposunda daha once farkli dosyalar olmasidir." "Yellow"
+            $force = Read-Host "Uzak repoyu bu klasorle ezmek icin EVET yaz, iptal icin ENTER"
+
+            if ($force -eq "EVET") {
+                $forcePushCode = Invoke-GitWithRetry -argsList @("push", "-u", "origin", "main", "--force") -label "Force push" -maxAttempts 3 -delaySeconds 5
+
+                if ($forcePushCode -ne 0) {
+                    throw "Force push da basarisiz oldu."
+                }
+            }
+            else {
+                throw "Push iptal edildi."
+            }
+        }
+    }
+    finally {
+        Pop-Location
     }
 }
 
@@ -1725,11 +3684,12 @@ function Publish-CurrentFolder {
     Header
 
     if (!(Test-Path "index.html")) {
-        Write-Host "[HATA] Bu klasorde index.html yok."
-        Write-Host "BAT dosyasini yayina almak istedigin sitenin ana klasorune koy."
+        Write-BoxMessage "publish blocked" "Bu klasorde index.html yok. BAT dosyasini yayina almak istedigin sitenin ana klasorune koy." "Red"
         After-Action
         return
     }
+
+    Ensure-GitHubReady
 
     $currentPath = (Get-Location).Path
     $localMap = Load-LocalMap
@@ -1741,7 +3701,7 @@ function Publish-CurrentFolder {
     if ($null -ne $localMap -and ![string]::IsNullOrWhiteSpace($localMap.FullName)) {
         $fullName = $localMap.FullName
         $repoName = $localMap.RepoName
-        Write-Host "[OK] Bu klasor daha once repoya baglanmis: $fullName"
+        Write-ThemeValue "baglanti" $fullName
     }
     else {
         $existing = $db | Where-Object { $_.LocalPath -eq $currentPath } | Select-Object -First 1
@@ -1749,15 +3709,15 @@ function Publish-CurrentFolder {
         if ($null -ne $existing) {
             $fullName = $existing.FullName
             $repoName = $existing.RepoName
-            Write-Host "[OK] Bu klasor kayitlarda bulundu: $fullName"
+            Write-ThemeValue "kayit" $fullName
         }
     }
 
     if ([string]::IsNullOrWhiteSpace($fullName)) {
         $defaultRepo = Get-SafeRepoName
 
-        Write-Host "Bu klasor henuz bir GitHub reposuna bagli degil."
-        Write-Host "Otomatik repo adi: $defaultRepo"
+        Write-BoxMessage "new repo" "Bu klasor henuz bir GitHub reposuna bagli degil." "Cyan"
+        Write-ThemeValue "otomatik ad" $defaultRepo
         Write-Host ""
 
         $custom = Read-Host "Repo adi yaz veya otomatik ad icin ENTER"
@@ -1769,35 +3729,28 @@ function Publish-CurrentFolder {
             $repoName = $custom.Trim()
         }
 
-        $repoName = $repoName -replace '[^A-Za-z0-9._-]', '-'
-        $repoName = $repoName -replace '-+', '-'
-        $repoName = $repoName.Trim([char[]]"-.")
+        $repoName = Normalize-RepoNameInput $repoName
         $fullName = "$script:GhUser/$repoName"
     }
 
-    $split = Split-FullRepoName $fullName
-    $owner = $split.Owner
-    $repoName = $split.Repo
-    $siteUrl = "https://$owner.github.io/$repoName/"
-    $repoUrl = "https://github.com/$fullName"
+    $fullName = Resolve-CanonicalRepoFullName $fullName
+    $record = New-RepoRecord $fullName $currentPath
+    $owner = $record.Owner
+    $repoName = $record.RepoName
+    $siteUrl = $record.SiteUrl
+    $repoUrl = $record.RepoUrl
 
     Write-Host ""
-    Write-Host "Kullanilacak repo: $fullName"
-    Write-Host "Site linki: $siteUrl"
+    Write-ThemeValue "repo" $fullName
+    Write-ThemeValue "site" $siteUrl
+    Write-BoxMessage "clean mode" "Proje klasoru temiz kalacak; Git islemleri uygulama staging klasorunde yapiliyor." "Cyan"
     Write-Host ""
 
-    $earlyRecord = [PSCustomObject]@{
-        FullName = $fullName
-        Owner = $owner
-        RepoName = $repoName
-        LocalPath = $currentPath
-        SiteUrl = $siteUrl
-        RepoUrl = $repoUrl
-        UpdatedAt = (Get-Date).ToString("s")
-    }
+    $worktreePath = $record.WorktreePath
 
-    Write-Host "[INFO] Repo kaydi yaziliyor..."
-    Upsert-Record $earlyRecord
+    Write-StatusInfo "Repo kaydi yaziliyor..."
+    Upsert-Record $record
+    Save-LocalMap $record.FullName $record.RepoName $record.SiteUrl
 
     $writtenCheck = [System.IO.File]::ReadAllText($DbPath)
 
@@ -1805,15 +3758,15 @@ function Publish-CurrentFolder {
         throw "Kayit yazilamadi. repos.json hala bos: $DbPath"
     }
 
-    Write-Host "[OK] Kayit dosyasi dolu."
-    Write-Host $DbPath
+    Write-StatusOk "Kayit dosyasi dolu."
+    Write-ThemeValue "kayit" $DbPath
     Write-Host ""
 
     $repoView = Invoke-GhSilent @("repo", "view", $fullName)
     $repoExists = $repoView.Code -eq 0
 
     if (!$repoExists) {
-        Write-Host "[INFO] GitHub reposu yok. Olusturuluyor..."
+        Write-StatusInfo "GitHub reposu yok. Olusturuluyor..."
 
         $createResult = Invoke-GhInteractiveWithRetry -argsList @("repo", "create", $fullName, "--public") -label "GitHub reposu olusturma" -maxAttempts 4 -delaySeconds 5
 
@@ -1824,72 +3777,61 @@ function Publish-CurrentFolder {
                 throw "GitHub reposu olusturulamadi."
             }
 
-            Write-Host "[INFO] Repo olusturma komutu hata verdi ama repo GitHub'da gorunuyor. Devam ediliyor."
+            Write-StatusInfo "Repo olusturma komutu hata verdi ama repo GitHub'da gorunuyor. Devam ediliyor."
         }
     }
     else {
-        Write-Host "[INFO] GitHub reposu var. Guncellenecek."
+        Write-StatusInfo "GitHub reposu var. Guncellenecek."
     }
 
-    Ensure-GitIgnore
-    Ensure-GitRepo $fullName
+    $canonicalAfterCreate = Resolve-CanonicalRepoFullName $fullName
 
-    if (!(Test-Path ".nojekyll")) {
-        New-Item -ItemType File -Path ".nojekyll" | Out-Null
+    if (![string]::IsNullOrWhiteSpace($canonicalAfterCreate) -and $canonicalAfterCreate -ne $fullName) {
+        $fullName = $canonicalAfterCreate
+        $record = New-RepoRecord $fullName $currentPath
+        $owner = $record.Owner
+        $repoName = $record.RepoName
+        $siteUrl = $record.SiteUrl
+        $repoUrl = $record.RepoUrl
+        $worktreePath = $record.WorktreePath
+        Upsert-Record $record
+        Save-LocalMap $record.FullName $record.RepoName $record.SiteUrl
+        Write-StatusInfo "Repo adi GitHub ile esitlendi: $fullName"
     }
 
-    Commit-And-Push
+    Sync-ProjectToStaging $currentPath $worktreePath
+    Ensure-GitRepo $fullName $worktreePath
+    Commit-And-Push $worktreePath
     Enable-Pages $owner $repoName
 
-    Save-LocalMap $fullName $repoName $siteUrl
-
-    $finalRecord = [PSCustomObject]@{
-        FullName = $fullName
-        Owner = $owner
-        RepoName = $repoName
-        LocalPath = $currentPath
-        SiteUrl = $siteUrl
-        RepoUrl = $repoUrl
-        UpdatedAt = (Get-Date).ToString("s")
-    }
-
+    $finalRecord = New-RepoRecord $fullName $currentPath
     Upsert-Record $finalRecord
+    Save-LocalMap $finalRecord.FullName $finalRecord.RepoName $finalRecord.SiteUrl
+    Start-ClientStatusWorker
 
-    Write-Host ""
-    Write-Host "===================================================="
-    Write-Host "   YAYIN / GUNCELLEME TAMAMLANDI"
-    Write-Host "===================================================="
-    Write-Host ""
-    Write-Host "Repo:"
-    Write-Host $repoUrl
-    Write-Host ""
-    Write-Host "Site:"
-    Write-Host $siteUrl
-    Write-Host ""
-    Write-Host "Kayit dosyasi:"
-    Write-Host $DbPath
-    Write-Host ""
-    Write-Host "Not: Ilk yayin bazen 1-3 dakika gec acilabilir."
+    Write-BoxMessage "publish complete" "Yayin / guncelleme tamamlandi." "Green"
+    Write-ThemeValue "repo" $finalRecord.RepoUrl
+    Write-ThemeValue "site" $finalRecord.SiteUrl
+    Write-ThemeValue "kayit" $DbPath
+    Write-StatusInfo "Ilk yayin bazen 1-3 dakika gec acilabilir."
 
-    After-Publish $siteUrl
+    After-Publish $finalRecord.SiteUrl
 }
 
 function Remove-LocalMap-IfMatches($record) {
     try {
-        if ($null -eq $record.LocalPath) {
+        if ($null -eq $record -or !(Test-Path $LocalMapFile)) {
             return
         }
 
-        $mapPath = Join-Path $record.LocalPath $LocalMapFile
+        $localMap = Load-LocalMap
 
-        if (!(Test-Path $mapPath)) {
+        if ($null -eq $localMap -or [string]::IsNullOrWhiteSpace($localMap.FullName)) {
             return
         }
 
-        $map = Get-Content -LiteralPath $mapPath -Raw -Encoding UTF8 | ConvertFrom-Json
-
-        if ($map.FullName -eq $record.FullName) {
-            Remove-Item -LiteralPath $mapPath -Force
+        if (([string]$localMap.FullName).Equals([string]$record.FullName, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Remove-Item -LiteralPath $LocalMapFile -Force -ErrorAction SilentlyContinue
         }
     }
     catch {
@@ -1899,18 +3841,17 @@ function Remove-LocalMap-IfMatches($record) {
 function Delete-GitHubRepo($record) {
     Header
 
-    Write-Host "SECILI REPO:"
-    Write-Host $record.FullName
-    Write-Host ""
-    Write-Host "DIKKAT: Bu islem GitHub reposunu gercekten siler."
-    Write-Host "Geri almak kolay degil."
+    Ensure-GitHubReady
+
+    Write-ThemeValue "repo" $record.FullName
+    Write-BoxMessage "danger zone" "Bu islem GitHub reposunu gercekten siler. Geri almak kolay degil." "Yellow"
     Write-Host ""
 
     $confirm = Read-Host "Silmek icin repo adini aynen yaz: $($record.RepoName)"
 
     if ($confirm -ne $record.RepoName) {
         Write-Host ""
-        Write-Host "Silme iptal edildi."
+        Write-BoxMessage "cancelled" "Silme iptal edildi." "Yellow"
         Pause-Back
         return $false
     }
@@ -1923,13 +3864,11 @@ function Delete-GitHubRepo($record) {
 
     Header
 
-    Write-Host "SECILI REPO:"
-    Write-Host $record.FullName
-    Write-Host ""
-    Write-Host "[INFO] Silme yetkisi kontrol ediliyor..."
+    Write-ThemeValue "repo" $record.FullName
+    Write-StatusInfo "Silme yetkisi kontrol ediliyor..."
 
     if (Test-GhHasScope "delete_repo") {
-        Write-Host "[OK] delete_repo yetkisi zaten var."
+        Write-StatusOk "delete_repo yetkisi zaten var."
     }
     else {
         $refreshResult = Invoke-GhInteractiveResult @("auth", "refresh", "--hostname", "github.com", "-s", "delete_repo")
@@ -1939,39 +3878,35 @@ function Delete-GitHubRepo($record) {
 
             if (!$repairOk) {
                 Write-Host ""
-                Write-Host "[HATA] delete_repo yetkisi alinamadi."
-                Write-Host ""
-                Write-Host "Beklenen hesap:"
-                Write-Host $record.Owner
+                Write-BoxMessage "auth error" "delete_repo yetkisi alinamadi." "Red"
+                Write-ThemeValue "beklenen" $record.Owner
                 Pause-Back
                 return $false
             }
 
             Header
 
-            Write-Host "SECILI REPO:"
-            Write-Host $record.FullName
-            Write-Host ""
-            Write-Host "[OK] GitHub CLI hesap kaydi ve silme yetkisi onarildi."
-            Write-Host ""
+            Write-ThemeValue "repo" $record.FullName
+            Write-BoxMessage "auth repaired" "GitHub CLI hesap kaydi ve silme yetkisi onarildi." "Green"
         }
     }
 
-    Write-Host "[INFO] GitHub reposu siliniyor..."
+    Write-StatusInfo "GitHub reposu siliniyor..."
 
     $deleteCode = Invoke-GhInteractive @("repo", "delete", $record.FullName, "--yes")
 
     if ($deleteCode -ne 0) {
-        Write-Host "[HATA] Repo silinemedi."
+        Write-BoxMessage "delete error" "Repo silinemedi." "Red"
         Pause-Back
         return $false
     }
 
     Remove-Record $record.FullName
     Remove-LocalMap-IfMatches $record
+    Remove-StagingForRecord $record
 
     Write-Host ""
-    Write-Host "[OK] Repo GitHub'dan silindi ve kayittan kaldirildi."
+    Write-BoxMessage "deleted" "Repo GitHub'dan silindi ve kayittan kaldirildi." "Green"
     Pause-Back
     return $true
 }
@@ -1979,9 +3914,10 @@ function Delete-GitHubRepo($record) {
 function Remove-OnlyRecord($record) {
     Remove-Record $record.FullName
     Remove-LocalMap-IfMatches $record
+    Remove-StagingForRecord $record
 
     Write-Host ""
-    Write-Host "[OK] Kayit kaldirildi. GitHub reposuna dokunulmadi."
+    Write-BoxMessage "record removed" "Kayit kaldirildi. GitHub reposuna dokunulmadi." "Green"
     Pause-Back
     return $true
 }
@@ -1992,34 +3928,35 @@ function Repo-Options($record) {
             return
         }
 
+        $record = Repair-RepoRecordCasing $record
+
         Header
 
-        Write-Host "Secili repo:"
-        Write-Host $record.FullName
+        Write-ThemeValue "repo" $record.FullName
+        Write-ThemeValue "site" $record.SiteUrl
+        Write-ThemeValue "klasor" $record.LocalPath
         Write-Host ""
-        Write-Host "Site:"
-        Write-Host $record.SiteUrl
+        Write-MenuFrame "repo actions" {
+            Write-MenuItem "1" "siteyi ac"
+            Write-MenuItem "2" "GitHub repo sayfasini ac"
+            Write-MenuItem "3" "GitHub'dan sil ve kayittan kaldir"
+            Write-MenuItem "4" "sadece kayittan kaldir"
+            Write-MenuItem "8" "ana menu"
+            Write-MenuItem "0" "geri"
+        }
         Write-Host ""
-        Write-Host "Yerel klasor:"
-        Write-Host $record.LocalPath
-        Write-Host ""
-        Write-Host "1) Siteyi ac"
-        Write-Host "2) GitHub repo sayfasini ac"
-        Write-Host "3) GitHub'dan sil ve kayittan kaldir"
-        Write-Host "4) Sadece kayittan kaldir"
-        Write-Host "8) Ana menu"
-        Write-Host "0) Geri"
-        Write-Host ""
-        Write-Host "Secim:"
+        Write-KeyPrompt "secim"
 
         $choice = Read-KeyChoice @("1", "2", "3", "4", "8", "0")
 
         switch ($choice) {
             "1" {
+                $record = Repair-RepoRecordCasing $record
                 Start-Process $record.SiteUrl
                 continue
             }
             "2" {
+                $record = Repair-RepoRecordCasing $record
                 Start-Process $record.RepoUrl
                 continue
             }
@@ -2063,33 +4000,32 @@ function Show-RegisteredRepos {
         $items = @(Load-Db)
 
         if ($items.Count -eq 0) {
-            Write-Host "Kayitli repo yok."
+            Write-BoxMessage "repo records" "Kayitli repo yok." "Yellow"
+            Write-ThemeValue "kayit" $DbPath
             Write-Host ""
-            Write-Host "Kayit dosyasi:"
-            Write-Host $DbPath
+            Write-MenuItem "0" "geri"
             Write-Host ""
-            Write-Host "0) Geri"
-            Write-Host ""
-            Write-Host "Secim:"
+            Write-KeyPrompt "secim"
 
             $choice = Read-KeyChoice @("0")
             return
         }
 
-        Write-Host "Kayitli repolar:"
+        Write-SectionTitle "repo records"
         Write-Host ""
 
         for ($i = 0; $i -lt $items.Count; $i++) {
             $n = $i + 1
-            Write-Host "$n) $($items[$i].FullName)"
-            Write-Host " Site: $($items[$i].SiteUrl)"
-            Write-Host " Klasor: $($items[$i].LocalPath)"
+            Write-MenuItem ([string]$n) $items[$i].FullName
+            Write-Host "      site   : $($items[$i].SiteUrl)" -ForegroundColor DarkGray
+            Write-Host "      klasor : $($items[$i].LocalPath)" -ForegroundColor DarkGray
             Write-Host ""
         }
 
-        Write-Host "0) Geri"
+        Write-Host "+---------------------------------------------------+" -ForegroundColor DarkCyan
+        Write-MenuItem "0" "geri"
         Write-Host ""
-        Write-Host "Repo numarasi sec:"
+        Write-KeyPrompt "repo"
 
         $validKeys = @("0")
 
@@ -2115,6 +4051,11 @@ function Show-RegisteredRepos {
     }
 }
 
+function Open-AppDataFolder {
+    Ensure-WorktreesDir
+    Start-Process $StoreDir
+}
+
 function Run-Action($action) {
     try {
         & $action
@@ -2125,16 +4066,71 @@ function Run-Action($action) {
     }
 }
 
+function Invoke-StartupStep($name, [scriptblock]$action) {
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $status = "ok"
+    $detail = ""
+
+    try {
+        & $action
+    }
+    catch {
+        $status = "error"
+        $detail = $_.Exception.Message
+    }
+    finally {
+        $sw.Stop()
+
+        [void]$script:StartupSteps.Add([PSCustomObject]@{
+            Name = $name
+            Status = $status
+            Detail = $detail
+            Milliseconds = $sw.ElapsedMilliseconds
+        })
+    }
+}
+
+function Save-StartupDiagnostic {
+    try {
+        Ensure-Storage
+
+        $diagnostic = [PSCustomObject]@{
+            SchemaVersion = 1
+            StartedAt = (Get-Date).ToUniversalTime().ToString("o")
+            AppVersion = $AppVersion
+            Steps = @($script:StartupSteps.ToArray())
+        }
+
+        $json = $diagnostic | ConvertTo-Json -Depth 10
+        [System.IO.File]::WriteAllText($StartupDiagPath, $json, [System.Text.UTF8Encoding]::new($false))
+    }
+    catch {
+    }
+}
+
+if ($env:GPM_TELEMETRY_WORKER -eq "1") {
+    try {
+        Ensure-Storage
+        Submit-ClientStatus
+    }
+    catch {
+        Save-ClientStatusDiagnostic "issue-failed" $_.Exception.Message
+    }
+
+    exit 0
+}
+
 try {
-    Ensure-Storage
-    Check-ForUpdates
-    Ensure-Tools
-    Ensure-GitHubAuth
+    $script:StartupSteps = New-Object System.Collections.ArrayList
+    Invoke-StartupStep "storage" { Ensure-Storage }
+    Invoke-StartupStep "update check" { Check-ForUpdates }
+    Invoke-StartupStep "telemetry worker" { Start-ClientStatusWorker }
+    Save-StartupDiagnostic
 }
 catch {
     Show-Error $_.Exception.Message
     Write-Host ""
-    Write-Host "2) Kapat"
+    Write-MenuItem "2" "Kapat"
     Write-Host ""
     Read-KeyChoice @("2") | Out-Null
     exit 1
@@ -2145,23 +4141,28 @@ while ($true) {
 
     Header
 
-    Write-Host "Uygulama surumu: $AppVersion"
+    Write-ThemeValue "surum" $AppVersion
     Write-Host ""
-    Write-Host "GitHub kullanicisi: $script:GhUser"
-    Write-Host "Calisan klasor:"
-    Write-Host (Get-Location).Path
+    if ([string]::IsNullOrWhiteSpace($script:GhUser)) {
+        Write-ThemeValue "github" "gerekince kontrol edilecek"
+    }
+    else {
+        Write-ThemeValue "github" $script:GhUser
+    }
+    Write-ThemeValue "klasor" (Get-Location).Path
+    Write-ThemeValue "kayit" $DbPath
     Write-Host ""
-    Write-Host "Kayit dosyasi:"
-    Write-Host $DbPath
+    Write-MenuFrame "operasyonlar" {
+        Write-MenuItem "1" "repo kayitlari"
+        Write-MenuItem "2" "bu klasoru yayinla / guncelle"
+        Write-MenuItem "3" "guncelleme notlari"
+        Write-MenuItem "4" "uygulama veri klasorunu ac"
+        Write-MenuItem "5" "cikis"
+    }
     Write-Host ""
-    Write-Host "1) Kayitli repolar"
-    Write-Host "2) Kaydet/Guncelle - bu klasoru GitHub Pages'e yayinla"
-    Write-Host "3) Guncelleme notlari"
-    Write-Host "4) Cikis"
-    Write-Host ""
-    Write-Host "Secim:"
+    Write-KeyPrompt "secim"
 
-    $mainChoice = Read-KeyChoice @("1", "2", "3", "4")
+    $mainChoice = Read-KeyChoice @("1", "2", "3", "4", "5")
 
     switch ($mainChoice) {
         "1" {
@@ -2174,6 +4175,9 @@ while ($true) {
             Run-Action { Show-UpdateNotes }
         }
         "4" {
+            Run-Action { Open-AppDataFolder }
+        }
+        "5" {
             exit 0
         }
     }

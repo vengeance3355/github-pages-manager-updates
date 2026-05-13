@@ -25,6 +25,11 @@
 ### Added
 - bir çok yeni özellik
 
+## 1.0.3 - 13.05.2026 21:34:24
+
+### Fixed
+- Proje isimlerinin repo ismiyle uyuşmama sorunu düzeltildi
+
 ## 1.0.2 - 13.05.2026 05:35:33
 
 ### Changed
