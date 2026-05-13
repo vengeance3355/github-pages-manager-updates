@@ -25,6 +25,11 @@
 ### Added
 - bir çok yeni özellik
 
+## 1.0.1 - 2026-05-13T02:21:54Z
+
+### Changed
+- Guncelleme yayinlandi.
+
 ## 1.0.0 - 2026-05-13T00:58:55Z
 
 ### Added
