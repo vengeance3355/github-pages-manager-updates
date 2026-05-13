@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.0 - 13.05.2026 23:29:30
+
+### Changed
+- Guncelleme yayinlandi.
+
 ## 1.0.9 - 13.05.2026 03:59:29
 
 ### Changed
@@ -55,18 +60,18 @@
 ### Added
 - İlk yayın
 
-## 1.0.2-final - 13.05.2026 06:45:51
+## 1.0.5-final - 13.05.2026 22:57:31
 
-### Added
-- Ana uygulama
+### Changed
+- Guncelleme yayinlandi.
 
 ## 1.0.4-beta - 13.05.2026 22:43:01
 
 ### Changed
 - Guncelleme yayinlandi.
 
-## 1.0.5-final - 13.05.2026 22:57:31
+## 1.0.2-final - 13.05.2026 06:45:51
 
-### Changed
-- Guncelleme yayinlandi.
+### Added
+- Ana uygulama
 
