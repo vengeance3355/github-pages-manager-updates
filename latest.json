@@ -34,16 +34,17 @@
                       "publicKey":  "PFJTQUtleVZhbHVlPjxNb2R1bHVzPnlERlVabnlhMGpac2diQ1d4NnBPNXJ0aCtZVmJBSm5VelNxVW13OG1OWjh0RVNZMXBJaWRqRXZ2YVBVMHoyUHd1SlFFSTVBUHIrNnFmeHJSVzB5ZHZPY2l4VFJsdkViNmttZkRwR2ZKZGVoWWp4R0hRWWRwRVUrM1hQT3d3RXJsemRVQkpOOXJTWDBUL2YxeGtRenhsSGVUNTRKUDlFMnpOb1dLbTRYU3g2VG1vSURqeW9FcXJLSnFOVnU2M2Z5SHltVnU3aW50OGhUNkFNaFBsUHV1akl5c3Q0M25GWDU2M2dMaENSakttdzNBbSt6QU8veTNyMUE4bWwwRExMRlQ3bXZyM2tudllQWTdEZE9WUUQ4V2VNTlMyMEJOUlF5a2kxclpFYlUxYldkcE1Oc2xVTW9kK1VGRHg5MGFxZmU3UWJSTVdKS3g2cjBDSzhhVGFNSzhGUT09PC9Nb2R1bHVzPjxFeHBvbmVudD5BUUFCPC9FeHBvbmVudD48L1JTQUtleVZhbHVlPg==",
                       "issueRepo":  "vengeance3355/github-pages-manager-updates"
                   },
-    "sourceRef":  "main",
+    "sourceRef":  "75718fd91d44f9a3e528bf16517e975de6c6de7e",
     "files":  {
                   "managerBat":  {
                                      "name":  "github-pages-manager-1.0.2.bat",
                                      "path":  "releases/github-pages-manager-1.0.2.bat",
                                      "sha256":  "58e4349ce23befde20fe5f0479826890985f4ff37f4a9ee2af5e5c0d020c97ba",
                                      "sizeBytes":  110238,
-                                     "downloadUrl":  "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/releases/github-pages-manager-1.0.2.bat",
+                                     "downloadUrl":  "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/75718fd91d44f9a3e528bf16517e975de6c6de7e/releases/github-pages-manager-1.0.2.bat",
                                      "alternativeUrls":  [
                                                              "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/releases/github-pages-manager-1.0.2.bat",
+                                                             "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/75718fd91d44f9a3e528bf16517e975de6c6de7e/github-pages-manager.bat",
                                                              "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/github-pages-manager.bat"
                                                          ]
                                  }
