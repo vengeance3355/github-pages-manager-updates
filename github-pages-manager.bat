@@ -22,6 +22,15 @@ catch {
 }
 
 function Set-ConsoleVisualProfile {
+    $diag = [ordered]@{
+        At = (Get-Date).ToString("s")
+        Success = $false
+        Font = ""
+        Height = 0
+        ModeApplied = $false
+        Error = ""
+    }
+
     try {
         Add-Type -TypeDefinition @"
 using System;
@@ -49,33 +58,72 @@ public static class GpmConsoleFont {
     public static extern IntPtr GetStdHandle(int nStdHandle);
 
     [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool GetCurrentConsoleFontEx(IntPtr consoleOutput, bool maximumWindow, ref CONSOLE_FONT_INFOEX consoleCurrentFontEx);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool SetCurrentConsoleFontEx(IntPtr consoleOutput, bool maximumWindow, ref CONSOLE_FONT_INFOEX consoleCurrentFontEx);
 }
 "@ -ErrorAction SilentlyContinue
 
         $handle = [GpmConsoleFont]::GetStdHandle(-11)
+        $current = New-Object GpmConsoleFont+CONSOLE_FONT_INFOEX
+        $current.cbSize = [Runtime.InteropServices.Marshal]::SizeOf([type]"GpmConsoleFont+CONSOLE_FONT_INFOEX")
+        $currentFace = "Consolas"
 
-        foreach ($height in @(32, 30, 28, 26, 24, 22)) {
-            $font = New-Object GpmConsoleFont+CONSOLE_FONT_INFOEX
-            $font.cbSize = [Runtime.InteropServices.Marshal]::SizeOf([type]"GpmConsoleFont+CONSOLE_FONT_INFOEX")
-            $font.nFont = 0
-            $font.dwFontSize = New-Object GpmConsoleFont+COORD
-            $font.dwFontSize.X = 0
-            $font.dwFontSize.Y = [int16]$height
-            $font.FontFamily = 54
-            $font.FontWeight = 400
-            $font.FaceName = "Consolas"
+        if ([GpmConsoleFont]::GetCurrentConsoleFontEx($handle, $false, [ref]$current)) {
+            if (![string]::IsNullOrWhiteSpace($current.FaceName)) {
+                $currentFace = $current.FaceName
+            }
+        }
 
-            if ([GpmConsoleFont]::SetCurrentConsoleFontEx($handle, $false, [ref]$font)) {
+        foreach ($faceName in @("Consolas", $currentFace) | Select-Object -Unique) {
+            foreach ($height in @(36, 34, 32, 30, 28, 26)) {
+                $font = New-Object GpmConsoleFont+CONSOLE_FONT_INFOEX
+                $font.cbSize = [Runtime.InteropServices.Marshal]::SizeOf([type]"GpmConsoleFont+CONSOLE_FONT_INFOEX")
+                $font.nFont = 0
+                $font.dwFontSize = New-Object GpmConsoleFont+COORD
+                $font.dwFontSize.X = 0
+                $font.dwFontSize.Y = [int16]$height
+                $font.FontFamily = 54
+                $font.FontWeight = 400
+                $font.FaceName = $faceName
+
+                if ([GpmConsoleFont]::SetCurrentConsoleFontEx($handle, $false, [ref]$font)) {
+                    $diag.Success = $true
+                    $diag.Font = $faceName
+                    $diag.Height = $height
+                    break
+                }
+            }
+
+            if ($diag.Success) {
                 break
             }
         }
     }
     catch {
+        $diag.Error = $_.Exception.Message
     }
 
     try {
         mode con: cols=100 lines=30 | Out-Null
+        $diag.ModeApplied = $true
+    }
+    catch {
+        if ([string]::IsNullOrWhiteSpace($diag.Error)) {
+            $diag.Error = $_.Exception.Message
+        }
+    }
+
+    try {
+        $diagDir = Join-Path $env:APPDATA "GithubPagesPublisher"
+        if (!(Test-Path -LiteralPath $diagDir)) {
+            New-Item -ItemType Directory -Path $diagDir -Force | Out-Null
+        }
+
+        $diagPath = Join-Path $diagDir "console-last.json"
+        $json = ([PSCustomObject]$diag) | ConvertTo-Json -Depth 5
+        [System.IO.File]::WriteAllText($diagPath, $json, [System.Text.UTF8Encoding]::new($false))
     }
     catch {
     }
@@ -83,7 +131,7 @@ public static class GpmConsoleFont {
 
 Set-ConsoleVisualProfile
 
-$AppVersion = "1.0.1"
+$AppVersion = "1.0.2"
 $UpdateManifestUrl = "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/latest.json"
 $ErrorReportRepo = "vengeance3355/github-pages-manager-updates"
 $TelemetryKeyId = "1271c5d9cd164324"
@@ -95,9 +143,12 @@ $UpdateCheckCachePath = Join-Path $StoreDir "update-check.json"
 $ClientStatusCachePath = Join-Path $StoreDir "client-status.json"
 $ClientStatusDiagPath = Join-Path $StoreDir "client-status-last.json"
 $ClientStatusSchemaVersion = 3
-$HttpTimeoutSeconds = 8
+$HttpTimeoutSeconds = 5
 $AdminConfigPath = Join-Path $env:APPDATA "GithubPagesPublisherAdmin\admin.json"
 $LocalMapFile = ".gh-pages-publisher.json"
+$StartupDiagPath = Join-Path $StoreDir "startup-last.json"
+$TelemetryQueueDir = Join-Path $StoreDir "telemetry-queue"
+$TelemetryWorkerPath = Join-Path $StoreDir "client-status-worker.ps1"
 $script:ReturnToMain = $false
 $script:GhUser = $null
 $script:LastOpenedDeviceLoginUrl = $null
@@ -111,6 +162,25 @@ function Write-ThemeLine($text = "", $color = "Gray") {
 function Write-ThemeValue($label, $value) {
     Write-Host ("[sys] {0,-12}: " -f $label) -ForegroundColor DarkGray -NoNewline
     Write-Host $value -ForegroundColor Green
+}
+
+function Format-GpmDateTime($value) {
+    if ([string]::IsNullOrWhiteSpace([string]$value)) {
+        return "bilinmiyor"
+    }
+
+    $text = ([string]$value).Trim()
+
+    try {
+        if ($text -match '(Z|[+-]\d{2}:\d{2})$') {
+            return ([DateTimeOffset]::Parse($text, [Globalization.CultureInfo]::InvariantCulture)).ToLocalTime().ToString("dd.MM.yyyy HH:mm:ss")
+        }
+
+        return ([DateTime]::Parse($text, [Globalization.CultureInfo]::InvariantCulture)).ToString("dd.MM.yyyy HH:mm:ss")
+    }
+    catch {
+        return $text
+    }
 }
 
 function Write-MenuItem($key, $text) {
@@ -427,7 +497,78 @@ function Get-PinnedManifestUrl($manifestUrl) {
     return $null
 }
 
+function Get-RawMainManifestInfo($manifestUrl) {
+    if ([string]::IsNullOrWhiteSpace($manifestUrl)) {
+        return $null
+    }
+
+    if ($manifestUrl -match '^https?://raw\.githubusercontent\.com/([^/]+)/([^/]+)/main/(.+)$') {
+        return [PSCustomObject]@{
+            RepoFullName = "$($matches[1])/$($matches[2])"
+            Path = $matches[3]
+        }
+    }
+
+    return $null
+}
+
+function Get-HeadShaFromRawUrl($url) {
+    if ([string]::IsNullOrWhiteSpace($url)) {
+        return $null
+    }
+
+    if ($url -match '^https?://raw\.githubusercontent\.com/[^/]+/[^/]+/([0-9a-fA-F]{40})/') {
+        return $matches[1].ToLowerInvariant()
+    }
+
+    return $null
+}
+
 function Get-UpdateManifest($manifestUrl) {
+    $cache = Get-UpdateCheckCache
+    $rawInfo = Get-RawMainManifestInfo $manifestUrl
+
+    if ($null -ne $rawInfo) {
+        $headSha = Get-GitHubBranchHeadSha $rawInfo.RepoFullName "main"
+
+        if ([string]::IsNullOrWhiteSpace($headSha)) {
+            if ($null -ne $cache -and $null -ne $cache.Manifest) {
+                return [PSCustomObject]@{
+                    Manifest = $cache.Manifest
+                    SourceUrl = $cache.SourceUrl
+                    HeadSha = $cache.HeadSha
+                    FromCache = $true
+                }
+            }
+        }
+        elseif ($null -ne $cache -and $null -ne $cache.Manifest -and [string]$cache.HeadSha -eq [string]$headSha) {
+            return [PSCustomObject]@{
+                Manifest = $cache.Manifest
+                SourceUrl = $cache.SourceUrl
+                HeadSha = $headSha
+                FromCache = $true
+            }
+        }
+        else {
+            $pinnedManifestUrl = "https://raw.githubusercontent.com/$($rawInfo.RepoFullName)/$headSha/$($rawInfo.Path)"
+
+            try {
+                $manifest = Invoke-JsonUrl $pinnedManifestUrl
+
+                if ($null -ne $manifest) {
+                    return [PSCustomObject]@{
+                        Manifest = $manifest
+                        SourceUrl = $pinnedManifestUrl
+                        HeadSha = $headSha
+                        FromCache = $false
+                    }
+                }
+            }
+            catch {
+            }
+        }
+    }
+
     $pinnedManifestUrl = Get-PinnedManifestUrl $manifestUrl
 
     if (![string]::IsNullOrWhiteSpace($pinnedManifestUrl)) {
@@ -438,6 +579,8 @@ function Get-UpdateManifest($manifestUrl) {
                 return [PSCustomObject]@{
                     Manifest = $manifest
                     SourceUrl = $pinnedManifestUrl
+                    HeadSha = Get-HeadShaFromRawUrl $pinnedManifestUrl
+                    FromCache = $false
                 }
             }
         }
@@ -450,6 +593,8 @@ function Get-UpdateManifest($manifestUrl) {
     return [PSCustomObject]@{
         Manifest = $fallbackManifest
         SourceUrl = $manifestUrl
+        HeadSha = Get-HeadShaFromRawUrl $manifestUrl
+        FromCache = $false
     }
 }
 
@@ -477,6 +622,7 @@ function Save-UpdateCheckCache($manifestUrl, $manifestSourceUrl, $manifest) {
         CheckedAt = (Get-Date).ToUniversalTime().ToString("o")
         ManifestUrl = $manifestUrl
         SourceUrl = $manifestSourceUrl
+        HeadSha = Get-HeadShaFromRawUrl $manifestSourceUrl
         Manifest = $manifest
     }
 
@@ -1308,6 +1454,86 @@ function Test-ClientStatusCacheFresh($signature, $activeGhUser) {
     }
 }
 
+function Queue-ClientStatusEvent {
+    try {
+        Ensure-Storage
+
+        if (!(Test-Path -LiteralPath $TelemetryQueueDir)) {
+            New-Item -ItemType Directory -Path $TelemetryQueueDir -Force | Out-Null
+        }
+
+        $event = [PSCustomObject]@{
+            SchemaVersion = 1
+            QueuedAt = (Get-Date).ToUniversalTime().ToString("o")
+            AppVersion = $AppVersion
+            Computer = $env:COMPUTERNAME
+            WindowsUser = "$env:USERDOMAIN\$env:USERNAME"
+            WorkingDirectory = (Get-Location).Path
+            BatPath = $env:BAT_FILE
+        }
+
+        $path = Join-Path $TelemetryQueueDir ("usage-" + (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + ([Guid]::NewGuid().ToString("N")) + ".json")
+        $json = $event | ConvertTo-Json -Depth 10
+        [System.IO.File]::WriteAllText($path, $json, [System.Text.UTF8Encoding]::new($false))
+        return $path
+    }
+    catch {
+        return $null
+    }
+}
+
+function Clear-ClientStatusQueue {
+    try {
+        if (!(Test-Path -LiteralPath $TelemetryQueueDir)) {
+            return
+        }
+
+        Get-ChildItem -LiteralPath $TelemetryQueueDir -Filter "*.json" -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+    }
+    catch {
+    }
+}
+
+function Start-ClientStatusWorker {
+    try {
+        Queue-ClientStatusEvent | Out-Null
+
+        if (!(Test-TelemetryEncryptionAvailable)) {
+            Save-ClientStatusDiagnostic "no-key" "Telemetry public key bulunamadi."
+            return
+        }
+
+        $batPath = [string]$env:BAT_FILE
+
+        if ([string]::IsNullOrWhiteSpace($batPath) -or !(Test-Path -LiteralPath $batPath)) {
+            Save-ClientStatusDiagnostic "worker-failed" "BAT yolu bulunamadi."
+            return
+        }
+
+        Ensure-Storage
+        $escapedBatPath = $batPath.Replace("'", "''")
+        $workerScript = @"
+`$ErrorActionPreference = "SilentlyContinue"
+`$env:GPM_TELEMETRY_WORKER = "1"
+`$file = '$escapedBatPath'
+`$marker = '### POWERSHELL ###'
+`$lines = Get-Content -LiteralPath `$file
+`$idx = [Array]::IndexOf(`$lines, `$marker)
+if (`$idx -ge 0) {
+    `$code = (`$lines[(`$idx + 1)..(`$lines.Count - 1)] -join [Environment]::NewLine)
+    Invoke-Expression `$code
+}
+"@
+
+        [System.IO.File]::WriteAllText($TelemetryWorkerPath, $workerScript, [System.Text.UTF8Encoding]::new($false))
+        Start-Process -FilePath "powershell" -WindowStyle Hidden -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $TelemetryWorkerPath)
+        Save-ClientStatusDiagnostic "queued" "Telemetry arka planda gonderilecek."
+    }
+    catch {
+        Save-ClientStatusDiagnostic "worker-failed" $_.Exception.Message
+    }
+}
+
 function Find-ExistingClientStatusIssue($repoFullName, $signature) {
     if ([string]::IsNullOrWhiteSpace($signature)) {
         return $null
@@ -1500,6 +1726,7 @@ function Submit-ClientStatus {
         if ($result.Code -eq 0) {
             Save-ClientStatusCache $signature $activeGhUser
             Save-ClientStatusDiagnostic "ok" "Telemetry issue guncellendi."
+            Clear-ClientStatusQueue
 
             if ($null -ne $existingIssue) {
                 if (!$usageCommentSent) {
@@ -2401,6 +2628,11 @@ function Ensure-GitHubAuth {
     }
 }
 
+function Ensure-GitHubReady {
+    Ensure-Tools
+    Ensure-GitHubAuth
+}
+
 function Load-Db {
     Ensure-Storage
 
@@ -2900,6 +3132,8 @@ function Publish-CurrentFolder {
         return
     }
 
+    Ensure-GitHubReady
+
     $currentPath = (Get-Location).Path
     $localMap = Load-LocalMap
     $db = @(Load-Db)
@@ -3037,6 +3271,8 @@ function Remove-LocalMap-IfMatches($record) {
 
 function Delete-GitHubRepo($record) {
     Header
+
+    Ensure-GitHubReady
 
     Write-ThemeValue "repo" $record.FullName
     Write-BoxMessage "danger zone" "Bu islem GitHub reposunu gercekten siler. Geri almak kolay degil." "Yellow"
@@ -3255,12 +3491,66 @@ function Run-Action($action) {
     }
 }
 
+function Invoke-StartupStep($name, [scriptblock]$action) {
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $status = "ok"
+    $detail = ""
+
+    try {
+        & $action
+    }
+    catch {
+        $status = "error"
+        $detail = $_.Exception.Message
+    }
+    finally {
+        $sw.Stop()
+
+        [void]$script:StartupSteps.Add([PSCustomObject]@{
+            Name = $name
+            Status = $status
+            Detail = $detail
+            Milliseconds = $sw.ElapsedMilliseconds
+        })
+    }
+}
+
+function Save-StartupDiagnostic {
+    try {
+        Ensure-Storage
+
+        $diagnostic = [PSCustomObject]@{
+            SchemaVersion = 1
+            StartedAt = (Get-Date).ToUniversalTime().ToString("o")
+            AppVersion = $AppVersion
+            Steps = @($script:StartupSteps.ToArray())
+        }
+
+        $json = $diagnostic | ConvertTo-Json -Depth 10
+        [System.IO.File]::WriteAllText($StartupDiagPath, $json, [System.Text.UTF8Encoding]::new($false))
+    }
+    catch {
+    }
+}
+
+if ($env:GPM_TELEMETRY_WORKER -eq "1") {
+    try {
+        Ensure-Storage
+        Submit-ClientStatus
+    }
+    catch {
+        Save-ClientStatusDiagnostic "issue-failed" $_.Exception.Message
+    }
+
+    exit 0
+}
+
 try {
-    Ensure-Storage
-    Check-ForUpdates
-    Ensure-Tools
-    Ensure-GitHubAuth
-    Submit-ClientStatus
+    $script:StartupSteps = New-Object System.Collections.ArrayList
+    Invoke-StartupStep "storage" { Ensure-Storage }
+    Invoke-StartupStep "update check" { Check-ForUpdates }
+    Invoke-StartupStep "telemetry worker" { Start-ClientStatusWorker }
+    Save-StartupDiagnostic
 }
 catch {
     Show-Error $_.Exception.Message
@@ -3278,7 +3568,12 @@ while ($true) {
 
     Write-ThemeValue "surum" $AppVersion
     Write-Host ""
-    Write-ThemeValue "github" $script:GhUser
+    if ([string]::IsNullOrWhiteSpace($script:GhUser)) {
+        Write-ThemeValue "github" "gerekince kontrol edilecek"
+    }
+    else {
+        Write-ThemeValue "github" $script:GhUser
+    }
     Write-ThemeValue "klasor" (Get-Location).Path
     Write-ThemeValue "kayit" $DbPath
     Write-Host ""

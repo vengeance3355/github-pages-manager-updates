@@ -1,41 +1,46 @@
 # Changelog
 
-## 1.0.9 - 2026-05-13T00:59:29Z
+## 1.0.9 - 13.05.2026 03:59:29
 
 ### Changed
 - Guncelleme yayinlandi.
 
-## 1.0.8 - 2026-05-13T00:37:29Z
+## 1.0.8 - 13.05.2026 03:37:29
 
 ### Fixed
 - Güncelleme veya yeni repo oluşumunda olan bir hata düzeltildi
 
-## 1.0.7 - 2026-05-13T00:29:22Z
+## 1.0.7 - 13.05.2026 03:29:22
 
 ### Fixed
 - Güncelleme ve yeni repo açılışındaki bir hata düzeltildi
 
-## 1.0.6 - 2026-05-13T00:23:38Z
+## 1.0.6 - 13.05.2026 03:23:38
 
 ### Changed
 - Guncelleme yayinlandi.
 
-## 1.0.5 - 2026-05-12T23:18:22Z
+## 1.0.5 - 13.05.2026 02:18:22
 
 ### Added
 - bir çok yeni özellik
 
-## 1.0.1 - 2026-05-13T02:21:54Z
+## 1.0.2 - 13.05.2026 05:35:33
 
 ### Changed
 - Guncelleme yayinlandi.
 
-## 1.0.0 - 2026-05-13T00:58:55Z
+## 1.0.1 - 13.05.2026 05:21:54
+
+### Changed
+- Guncelleme yayinlandi.
+
+## 1.0.0 - 13.05.2026 03:58:55
 
 ### Added
 - İlk yayın
 
-## 1.0.0-base - 2026-05-13T01:14:22Z
+## 1.0.0-base - 13.05.2026 04:14:22
 
 ### Added
 - İlk yayın
