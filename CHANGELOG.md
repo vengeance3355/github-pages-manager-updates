@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.9 - 2026-05-13T00:59:29Z
+
+### Changed
+- Guncelleme yayinlandi.
+
 ## 1.0.8 - 2026-05-13T00:37:29Z
 
 ### Fixed
