@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.7 - 2026-05-13T00:29:22Z
+
+### Fixed
+- Güncelleme ve yeni repo açılışındaki bir hata düzeltildi
+
 ## 1.0.6 - 2026-05-13T00:23:38Z
 
 ### Changed
