@@ -83,7 +83,7 @@ public static class GpmConsoleFont {
 
 Set-ConsoleVisualProfile
 
-$AppVersion = "1.0.3"
+$AppVersion = "1.0.4"
 $UpdateManifestUrl = "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/latest.json"
 $ErrorReportRepo = "vengeance3355/github-pages-manager-updates"
 $TelemetryKeyId = "1271c5d9cd164324"
