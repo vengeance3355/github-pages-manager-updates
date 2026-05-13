@@ -20,3 +20,8 @@
 ### Added
 - bir çok yeni özellik
 
+## 1.0.0 - 2026-05-13T00:58:55Z
+
+### Added
+- İlk yayın
+
