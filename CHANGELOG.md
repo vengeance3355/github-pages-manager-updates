@@ -30,3 +30,8 @@
 ### Added
 - İlk yayın
 
+## 1.0.0-base - 2026-05-13T01:14:22Z
+
+### Added
+- İlk yayın
+
