@@ -65,3 +65,8 @@
 ### Changed
 - Guncelleme yayinlandi.
 
+## 1.0.5-final - 13.05.2026 22:57:31
+
+### Changed
+- Guncelleme yayinlandi.
+

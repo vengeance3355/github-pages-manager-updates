@@ -4,5 +4,5 @@ This public repository hosts update metadata, versioned BAT releases, and user e
 
 - Manifest: https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/latest.json
 - Latest compatibility BAT: https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/github-pages-manager.bat
-- Versioned releases: https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/releases/github-pages-manager-1.0.4-beta.bat
+- Versioned releases: https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/releases/github-pages-manager-1.0.5-final.bat
 - Error reports: https://github.com/vengeance3355/github-pages-manager-updates/issues
