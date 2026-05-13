@@ -60,3 +60,8 @@
 ### Added
 - Ana uygulama
 
+## 1.0.4-beta - 13.05.2026 22:43:01
+
+### Changed
+- Guncelleme yayinlandi.
+
