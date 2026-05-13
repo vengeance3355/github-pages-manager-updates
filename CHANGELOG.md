@@ -45,3 +45,8 @@
 ### Added
 - İlk yayın
 
+## 1.0.2-final - 13.05.2026 06:45:51
+
+### Added
+- Ana uygulama
+
