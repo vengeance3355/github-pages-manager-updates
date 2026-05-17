@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.03 - 17.05.2026 23:55:19
+
+### Changed
+- Guncelleme yayinlandi.
+
 ## 2.0.02 - 17.05.2026 23:32:33
 
 ### Changed
