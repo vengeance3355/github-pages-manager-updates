@@ -26,16 +26,17 @@
     "publicKey": "PFJTQUtleVZhbHVlPjxNb2R1bHVzPnlERlVabnlhMGpac2diQ1d4NnBPNXJ0aCtZVmJBSm5VelNxVW13OG1OWjh0RVNZMXBJaWRqRXZ2YVBVMHoyUHd1SlFFSTVBUHIrNnFmeHJSVzB5ZHZPY2l4VFJsdkViNmttZkRwR2ZKZGVoWWp4R0hRWWRwRVUrM1hQT3d3RXJsemRVQkpOOXJTWDBUL2YxeGtRenhsSGVUNTRKUDlFMnpOb1dLbTRYU3g2VG1vSURqeW9FcXJLSnFOVnU2M2Z5SHltVnU3aW50OGhUNkFNaFBsUHV1akl5c3Q0M25GWDU2M2dMaENSakttdzNBbSt6QU8veTNyMUE4bWwwRExMRlQ3bXZyM2tudllQWTdEZE9WUUQ4V2VNTlMyMEJOUlF5a2kxclpFYlUxYldkcE1Oc2xVTW9kK1VGRHg5MGFxZmU3UWJSTVdKS3g2cjBDSzhhVGFNSzhGUT09PC9Nb2R1bHVzPjxFeHBvbmVudD5BUUFCPC9FeHBvbmVudD48L1JTQUtleVZhbHVlPg==",
     "issueRepo": "vengeance3355/github-pages-manager-updates"
   },
-  "sourceRef": "main",
+  "sourceRef": "642f98fa60e8266332d6087d77d2645e2b98db70",
   "files": {
     "managerBat": {
       "name": "github-pages-manager-2.0.6.bat",
       "path": "releases/github-pages-manager-2.0.6.bat",
       "sha256": "971913252ef231ee1cf2d84d65c4fd4ee20e83085d23a1b6b59b42c0785cf77d",
       "sizeBytes": 196823,
-      "downloadUrl": "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/releases/github-pages-manager-2.0.6.bat",
+      "downloadUrl": "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/642f98fa60e8266332d6087d77d2645e2b98db70/releases/github-pages-manager-2.0.6.bat",
       "alternativeUrls": [
         "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/releases/github-pages-manager-2.0.6.bat",
+        "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/642f98fa60e8266332d6087d77d2645e2b98db70/github-pages-manager.bat",
         "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/github-pages-manager.bat"
       ]
     },
@@ -44,9 +45,10 @@
       "path": "releases/github-pages-manager-2.0.6.sh",
       "sha256": "de0e8fc1a18ce8a245fb5d83abcee05f6dc94596817cdca35561e293506b9bb3",
       "sizeBytes": 192241,
-      "downloadUrl": "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/releases/github-pages-manager-2.0.6.sh",
+      "downloadUrl": "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/642f98fa60e8266332d6087d77d2645e2b98db70/releases/github-pages-manager-2.0.6.sh",
       "alternativeUrls": [
         "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/releases/github-pages-manager-2.0.6.sh",
+        "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/642f98fa60e8266332d6087d77d2645e2b98db70/github-pages-manager-linux-single.sh",
         "https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/github-pages-manager-linux-single.sh"
       ]
     }
