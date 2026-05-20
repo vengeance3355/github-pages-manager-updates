@@ -1,10 +1,16 @@
 # Changelog
 
-## 2.0.5 - 20.05.2026 04:11:30
+## 2.0.6 - 20.05.2026 01:18:35
+
+### Changed
+- Guncelleme yayinlandi.
+
+## 2.0.5 - 20.05.2026 01:11:30
 
 ### Fixed
 - Linux self-update artik BAT yerine Linux SH paketini indiriyor.
 - Release manifestine managerSh artefact bilgisi eklendi.
+
 ## 2.0.4 - 18.05.2026 18:03:18
 
 ### Changed
@@ -80,6 +86,11 @@
 ### Added
 - İlk yayın
 
+## 1.0.5-final - 13.05.2026 19:57:31
+
+### Changed
+- Guncelleme yayinlandi.
+
 ## 1.0.4-beta - 13.05.2026 19:43:01
 
 ### Changed
@@ -89,11 +100,6 @@
 
 ### Added
 - Ana uygulama
-
-## 1.0.5-final - 13.05.2026 19:57:31
-
-### Changed
-- Guncelleme yayinlandi.
 
 ## 1.0.0-base - 13.05.2026 01:14:22
 
