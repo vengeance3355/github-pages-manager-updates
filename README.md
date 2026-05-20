@@ -1,8 +1,10 @@
 # GitHub Pages Manager Updates
 
-This public repository hosts update metadata, versioned BAT releases, and user error reports for GitHub Pages Manager.
+This public repository hosts update metadata, versioned BAT/SH releases, and user error reports for GitHub Pages Manager.
 
 - Manifest: https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/latest.json
 - Latest compatibility BAT: https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/github-pages-manager.bat
-- Versioned releases: https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/releases/github-pages-manager-2.0.4.bat
+- Latest Linux SH: https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/github-pages-manager-linux-single.sh
+- Versioned BAT: https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/releases/github-pages-manager-2.0.5.bat
+- Versioned Linux SH: https://raw.githubusercontent.com/vengeance3355/github-pages-manager-updates/main/releases/github-pages-manager-2.0.5.sh
 - Error reports: https://github.com/vengeance3355/github-pages-manager-updates/issues
